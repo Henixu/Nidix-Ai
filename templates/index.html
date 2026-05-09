@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CarRAG Studio — Cars Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&family=Instrument+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0a0f;
+  --surface: #111118;
+  --surface2: #1a1a24;
+  --surface3: #22222f;
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.13);
+  --accent: #f97316;
+  --accent2: #fb923c;
+  --accent3: #f59e0b;
+  --teal: #2dd4bf;
+  --amber: #fbbf24;
+  --red: #f87171;
+  --text: #f0effe;
+  --text2: #9d9bc0;
+  --text3: #5a5878;
+  --success: #34d399;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Instrument Sans', sans-serif;
+  --display: 'Syne', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 290px 1fr;
+  grid-template-rows: 56px 1fr;
+  overflow: hidden;
+}
+
+/* ── HEADER ── */
+header {
+  grid-column: 1 / -1;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 16px;
+  z-index: 10;
+}
+
+.logo {
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, var(--accent2), var(--accent3));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.logo-sep { width: 1px; height: 20px; background: var(--border2); }
+
+.header-sub {
+  font-size: 12px;
+  color: var(--text3);
+  font-family: var(--mono);
+}
+
+.header-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+
+.status-pill {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  font-size: 11px;
+  color: var(--text2);
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: border-color .2s;
+}
+.status-pill:hover { border-color: var(--border2); }
+
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  transition: all .3s;
+}
+.status-dot.on { background: var(--success); box-shadow: 0 0 6px var(--success); }
+
+.model-badge {
+  padding: 5px 12px;
+  background: rgba(124,109,240,.12);
+  border: 1px solid rgba(124,109,240,.25);
+  border-radius: 100px;
+  font-size: 11px;
+  color: var(--accent2);
+  font-family: var(--mono);
+}
+
+/* ── SIDEBAR ── */
+aside {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.s-sec {
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.s-label {
+  font-size: 9px;
+  font-family: var(--mono);
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-bottom: 12px;
+  padding-left: 2px;
+}
+
+.fg { margin-bottom: 10px; }
+
+.fg label {
+  display: block;
+  font-size: 10px;
+  color: var(--text2);
+  margin-bottom: 5px;
+  font-family: var(--mono);
+}
+
+.fg input,
+.fg select,
+.fg textarea {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 7px 9px;
+  outline: none;
+  transition: border-color .2s;
+  resize: none;
+}
+.fg input:focus,
+.fg select:focus,
+.fg textarea:focus { border-color: var(--accent); }
+.fg select option { background: #1a1a24; }
+
+.slider-row { display: flex; align-items: center; gap: 8px; }
+.slider-row input[type=range] {
+  flex: 1; padding: 0; height: 3px;
+  appearance: none; background: var(--surface3);
+  border: none; border-radius: 2px; cursor: pointer;
+}
+.slider-row input[type=range]::-webkit-slider-thumb {
+  appearance: none; width: 13px; height: 13px;
+  background: var(--accent); border-radius: 50%;
+}
+.sv {
+  font-size: 10px; font-family: var(--mono);
+  color: var(--accent2); min-width: 26px; text-align: right;
+}
+
+.btn {
+  width: 100%; padding: 8px 12px;
+  background: var(--accent); border: none;
+  border-radius: 7px; color: #fff;
+  font-family: var(--display);
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all .2s;
+}
+.btn:hover { background: var(--accent2); transform: translateY(-1px); }
+.btn:active { transform: none; }
+.btn:disabled { background: var(--surface3); color: var(--text3); cursor: not-allowed; transform: none; }
+
+.btn-ghost {
+  width: 100%; padding: 7px 10px;
+  background: transparent;
+  border: 1px solid var(--border2);
+  border-radius: 7px; color: var(--text2);
+  font-family: var(--mono); font-size: 11px;
+  cursor: pointer; transition: all .2s;
+  margin-bottom: 8px;
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent2); }
+
+/* progress */
+.prog { height: 2px; background: var(--surface3); border-radius: 1px; margin: 8px 0; overflow: hidden; display: none; }
+.prog-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent3));
+  width: 0%;
+  transition: width .4s ease;
+  border-radius: 1px;
+}
+
+/* chunks */
+.chunk-list { display: flex; flex-direction: column; gap: 5px; max-height: 200px; overflow-y: auto; }
+.chunk-item {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 9px;
+  font-family: var(--mono);
+  color: var(--text2);
+  line-height: 1.5;
+  transition: border-color .2s, color .2s;
+}
+.chunk-item:hover { border-color: var(--border2); color: var(--text); }
+.chunk-item.relevant { border-color: var(--teal); background: rgba(45,212,191,.04); color: var(--text); }
+.chunk-tag { font-size: 8px; color: var(--teal); margin-bottom: 2px; opacity: .7; }
+
+/* ── MAIN ── */
+main {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  overflow: hidden;
+  background: var(--bg);
+  position: relative;
+}
+
+.bg-grid {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(124,109,240,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124,109,240,.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* chat */
+.chat { overflow-y: auto; padding: 24px 32px; display: flex; flex-direction: column; gap: 18px; position: relative; z-index: 1; }
+
+.empty {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center; gap: 14px; padding: 60px 32px;
+  animation: fadeUp .5s ease .2s both;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.empty-icon {
+  width: 60px; height: 60px;
+  background: radial-gradient(circle, rgba(124,109,240,.18), transparent 70%);
+  border: 1px solid rgba(124,109,240,.2);
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px;
+}
+
+.empty-title { font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: -.5px; }
+.empty-sub { font-size: 13px; color: var(--text3); max-width: 340px; line-height: 1.65; }
+
+.pills { display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 6px; }
+.pill {
+  padding: 5px 13px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 100px;
+  font-size: 12px; color: var(--text2);
+  cursor: pointer; transition: all .2s;
+}
+.pill:hover { border-color: var(--accent); color: var(--accent2); background: rgba(124,109,240,.07); }
+
+/* messages */
+.msg { display: flex; gap: 11px; animation: fadeUp .3s ease; }
+
+.av {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+  font-family: var(--mono);
+}
+.av.u { background: rgba(124,109,240,.15); color: var(--accent2); border: 1px solid rgba(124,109,240,.2); }
+.av.a { background: rgba(45,212,191,.1); color: var(--teal); border: 1px solid rgba(45,212,191,.15); }
+
+.mb { flex: 1; min-width: 0; }
+
+.mm { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+.mn { font-size: 11px; font-weight: 600; font-family: var(--mono); color: var(--text2); }
+.mt { font-size: 9px; color: var(--text3); font-family: var(--mono); }
+
+.mc { font-size: 14px; line-height: 1.72; color: var(--text); }
+.mc p { margin-bottom: 6px; }
+.mc p:last-child { margin-bottom: 0; }
+.mc code {
+  font-family: var(--mono); font-size: 11px;
+  background: var(--surface2); border: 1px solid var(--border);
+  padding: 1px 5px; border-radius: 4px; color: var(--accent2);
+}
+
+/* sources */
+.sources { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
+.src {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--teal);
+  border-radius: 7px;
+  padding: 7px 11px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text2);
+  max-width: 190px;
+  transition: border-left-color .2s;
+}
+.src:hover { border-left-color: var(--accent2); color: var(--text); }
+.src-lbl { font-size: 8px; color: var(--teal); margin-bottom: 2px; letter-spacing: .08em; }
+.src-sim { font-size: 9px; color: var(--accent2); margin-top: 2px; }
+
+/* pipeline */
+.pipeline { display: flex; align-items: center; gap: 5px; margin-top: 9px; flex-wrap: wrap; }
+.ps {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 100px;
+  font-size: 9px; font-family: var(--mono);
+  background: rgba(52,211,153,.07);
+  border: 1px solid rgba(52,211,153,.2);
+  color: var(--success);
+}
+.ps.active {
+  background: rgba(124,109,240,.1);
+  border-color: rgba(124,109,240,.3);
+  color: var(--accent2);
+  animation: pulse 1s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+.pd { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.pa { font-size: 8px; color: var(--text3); }
+
+/* thinking */
+.dots span { display: inline-block; animation: blink 1.2s infinite; }
+.dots span:nth-child(2) { animation-delay: .2s; }
+.dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%,100%{opacity:.2} 50%{opacity:1} }
+
+/* streaming cursor */
+.cursor {
+  display: inline-block;
+  width: 2px; height: 14px;
+  background: var(--accent2);
+  margin-left: 2px;
+  vertical-align: middle;
+  animation: blink 0.8s infinite;
+}
+
+/* ── INPUT ── */
+.inp-area {
+  padding: 14px 32px 18px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  z-index: 2;
+}
+
+.inp-wrap {
+  display: flex; gap: 10px; align-items: flex-end;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 11px;
+  padding: 11px 13px;
+  transition: border-color .2s;
+}
+.inp-wrap:focus-within { border-color: var(--accent); }
+
+.inp-wrap textarea {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--text); font-family: var(--sans); font-size: 14px;
+  line-height: 1.5; resize: none; max-height: 120px; min-height: 22px;
+}
+.inp-wrap textarea::placeholder { color: var(--text3); }
+
+.send {
+  width: 34px; height: 34px;
+  background: var(--accent); border: none;
+  border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: all .2s; color: #fff;
+}
+.send:hover { background: var(--accent2); }
+.send:disabled { background: var(--surface3); cursor: not-allowed; }
+.send svg { width: 15px; height: 15px; }
+
+.inp-hint {
+  font-size: 10px; color: var(--text3);
+  font-family: var(--mono); margin-top: 7px; text-align: center;
+}
+
+/* toast */
+.toast {
+  position: fixed; bottom: 22px; right: 22px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 9px; padding: 9px 15px;
+  font-size: 12px; font-family: var(--mono); color: var(--text);
+  z-index: 200;
+  transform: translateY(70px); opacity: 0;
+  transition: all .3s ease; pointer-events: none;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.err { border-color: rgba(248,113,113,.35); color: var(--red); }
+.toast.ok { border-color: rgba(52,211,153,.35); color: var(--success); }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">CarRAG Studio</div>
+  <div class="logo-sep"></div>
+  <div class="header-sub">Cars knowledge assistant · MongoDB + Ollama</div>
+  <div class="header-right">
+    <div class="status-pill" onclick="testOllama()" title="Click to test connection">
+      <div class="status-dot" id="dot"></div>
+      <span id="statusTxt">disconnected</span>
+    </div>
+    <div class="model-badge" id="modelBadge">no model</div>
+  </div>
+</header>
+
+<!-- SIDEBAR -->
+<aside>
+  <!-- Ollama -->
+  <div class="s-sec">
+    <div class="s-label">⬡ Ollama Config</div>
+    <div class="fg">
+      <label>Base URL</label>
+      <input id="ollamaUrl" value="http://localhost:11434">
+    </div>
+    <div class="fg">
+      <label>Model</label>
+      <select id="modelSel" onchange="onModelChange()">
+        <option value="llama3.2">llama3.2</option>
+        <option value="llama3.1">llama3.1</option>
+        <option value="mistral">mistral</option>
+        <option value="mistral-nemo">mistral-nemo</option>
+        <option value="gemma2">gemma2</option>
+        <option value="gemma3">gemma3</option>
+        <option value="phi3">phi3</option>
+        <option value="phi4">phi4</option>
+        <option value="qwen2.5">qwen2.5</option>
+        <option value="deepseek-r1">deepseek-r1</option>
+        <option value="custom">custom...</option>
+      </select>
+    </div>
+    <div class="fg" id="customGrp" style="display:none">
+      <label>Custom model name</label>
+      <input id="customModel" placeholder="e.g. llama3.2:3b">
+    </div>
+    <button class="btn-ghost" onclick="testOllama()">↺ Test connection</button>
+  </div>
+
+  <!-- Document -->
+  <div class="s-sec">
+    <div class="s-label">◈ Cars Data Source</div>
+    <div class="fg">
+      <label>Source type</label>
+      <select id="srcType" onchange="toggleSrc()">
+        <option value="mongodb">MongoDB (Nidix.cars)</option>
+        <option value="url">Web URL</option>
+        <option value="text">Paste text</option>
+      </select>
+    </div>
+    <div class="fg" id="mongoGrp">
+      <label>Mongo URI</label>
+      <input id="mongoUri" value="mongodb://localhost:27017">
+    </div>
+    <div class="fg" id="mongoDbGrp">
+      <label>Mongo DB</label>
+      <input id="mongoDb" value="Nidix">
+    </div>
+    <div class="fg" id="mongoColGrp">
+      <label>Collection</label>
+      <input id="mongoCol" value="cars">
+    </div>
+    <div class="fg" id="urlGrp" style="display:none">
+      <label>URL</label>
+      <input id="docUrl" value="https://en.wikipedia.org/wiki/Artificial_intelligence">
+    </div>
+    <div class="fg" id="textGrp" style="display:none">
+      <label>Paste document</label>
+      <textarea id="docText" rows="5" placeholder="Paste your text here..."></textarea>
+    </div>
+    <button class="btn" id="idxBtn" onclick="indexDoc()">Index Cars Collection</button>
+    <div class="prog" id="prog"><div class="prog-fill" id="progFill"></div></div>
+  </div>
+
+  <!-- RAG Params -->
+  <div class="s-sec">
+    <div class="s-label">⊙ RAG Parameters</div>
+    <div class="fg">
+      <label>Chunk size (chars, non-Mongo sources)</label>
+      <div class="slider-row">
+        <input type="range" min="100" max="2000" value="500" step="100" id="chunkSize"
+          oninput="document.getElementById('csv').textContent=this.value">
+        <span class="sv" id="csv">500</span>
+      </div>
+    </div>
+    <div class="fg">
+      <label>Chunk overlap (non-Mongo sources)</label>
+      <div class="slider-row">
+        <input type="range" min="0" max="200" value="50" step="10" id="chunkOvlp"
+          oninput="document.getElementById('cov').textContent=this.value">
+        <span class="sv" id="cov">50</span>
+      </div>
+    </div>
+    <div class="fg">
+      <label>Top-K chunks</label>
+      <div class="slider-row">
+        <input type="range" min="1" max="8" value="3" step="1" id="topK"
+          oninput="document.getElementById('tkv').textContent=this.value">
+        <span class="sv" id="tkv">3</span>
+      </div>
+    </div>
+    <div class="fg">
+      <label>Temperature</label>
+      <div class="slider-row">
+        <input type="range" min="0" max="10" value="3" step="1" id="temp"
+          oninput="document.getElementById('tv').textContent=(this.value/10).toFixed(1)">
+        <span class="sv" id="tv">0.3</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chunks preview -->
+  <div class="s-sec" id="chunksSec" style="display:none">
+    <div class="s-label">▤ Indexed Car Profiles (<span id="chunkCnt">0</span>)</div>
+    <div class="chunk-list" id="chunkList"></div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main>
+  <div class="bg-grid"></div>
+
+  <div class="chat" id="chat">
+    <div class="empty" id="emptyState">
+      <div class="empty-icon">◈</div>
+      <div class="empty-title">CarRAG Assistant</div>
+      <div class="empty-sub">Index your `Nidix.cars` MongoDB collection, then ask for car specs, ranking, and side-by-side comparisons based only on your data.</div>
+      <div class="pills">
+        <div class="pill" onclick="useQ(this)">Compare Toyota Yaris vs Renault Clio (price, power, consumption)</div>
+        <div class="pill" onclick="useQ(this)">Which cars are the cheapest with automatic transmission?</div>
+        <div class="pill" onclick="useQ(this)">Top 5 cars by best fuel economy and low CO2</div>
+        <div class="pill" onclick="useQ(this)">Show electric models with highest autonomy</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="inp-area">
+    <div class="inp-wrap">
+      <textarea id="qInput" placeholder="Ask about cars: specs, prices, comparisons, rankings..."
+        rows="1" onkeydown="onKey(event)" oninput="resize(this)"></textarea>
+      <button class="send" id="sendBtn" onclick="ask()" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </div>
+    <div class="inp-hint">Index cars first · Enter to send · Shift+Enter for newline</div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let indexed = false;
+let busy = false;
+let allChunks = [];
+let relevantIdx = [];
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+function toast(msg, type='') {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.className = 'toast', 3200);
+}
+
+function model() {
+  const v = $('modelSel').value;
+  return v === 'custom' ? ($('customModel').value.trim() || 'llama3.2') : v;
+}
+
+function onModelChange() {
+  $('customGrp').style.display = $('modelSel').value === 'custom' ? '' : 'none';
+  $('modelBadge').textContent = model();
+}
+
+function toggleSrc() {
+  const t = $('srcType').value;
+  $('mongoGrp').style.display = t === 'mongodb' ? '' : 'none';
+  $('mongoDbGrp').style.display = t === 'mongodb' ? '' : 'none';
+  $('mongoColGrp').style.display = t === 'mongodb' ? '' : 'none';
+  $('urlGrp').style.display = t === 'url' ? '' : 'none';
+  $('textGrp').style.display = t === 'text' ? '' : 'none';
+}
+
+function useQ(el) {
+  $('qInput').value = el.textContent;
+  $('qInput').focus();
+  resize($('qInput'));
+}
+
+function resize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function onKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
+}
+
+function now() {
+  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ── Ollama test ────────────────────────────────────────────────────────────────
+async function testOllama() {
+  try {
+    const r = await fetch(`/api/status?ollama_url=${encodeURIComponent($('ollamaUrl').value)}`);
+    const d = await r.json();
+    if (d.connected) {
+      $('dot').classList.add('on');
+      $('statusTxt').textContent = 'connected';
+      $('modelBadge').textContent = model();
+      toast('Ollama connected! Models: ' + (d.models.slice(0,3).join(', ') || 'none'), 'ok');
+    } else {
+      throw new Error('not reachable');
+    }
+  } catch(e) {
+    $('dot').classList.remove('on');
+    $('statusTxt').textContent = 'disconnected';
+    toast('Cannot reach Ollama at that URL.', 'err');
+  }
+}
+
+// ── Indexing ───────────────────────────────────────────────────────────────────
+async function indexDoc() {
+  const btn = $('idxBtn');
+  const prog = $('prog');
+  const fill = $('progFill');
+  btn.disabled = true;
+    btn.textContent = 'Indexing Cars...';
+  prog.style.display = '';
+  fill.style.width = '20%';
+
+  const srcType = $('srcType').value;
+  const content =
+    srcType === 'url'
+      ? $('docUrl').value.trim()
+      : (srcType === 'text' ? $('docText').value.trim() : '');
+
+  if ((srcType === 'url' || srcType === 'text') && !content) {
+    toast('Please provide a URL or text source.', 'err');
+    btn.disabled = false;
+    btn.textContent = 'Index Cars Collection';
+    prog.style.display = 'none';
+    return;
+  }
+
+  try {
+    fill.style.width = '50%';
+    const r = await fetch('/api/index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_type: srcType,
+        content,
+        chunk_size: parseInt($('chunkSize').value),
+        chunk_overlap: parseInt($('chunkOvlp').value),
+        mongo_uri: $('mongoUri').value.trim(),
+        mongo_db: $('mongoDb').value.trim(),
+        mongo_collection: $('mongoCol').value.trim()
+      })
+    });
+
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Indexing failed');
+
+    fill.style.width = '100%';
+    allChunks = d.chunks;
+    indexed = true;
+    $('sendBtn').disabled = false;
+    $('dot').classList.add('on');
+    $('statusTxt').textContent = 'indexed';
+    renderChunks([]);
+    toast(`Indexed ${d.chunk_count} car profiles!`, 'ok');
+    setTimeout(() => { prog.style.display = 'none'; }, 500);
+  } catch(e) {
+    toast(e.message, 'err');
+    prog.style.display = 'none';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Index Cars Collection';
+  }
+}
+
+function renderChunks(relevant = []) {
+  const sec = $('chunksSec');
+  const list = $('chunkList');
+  $('chunkCnt').textContent = allChunks.length;
+  sec.style.display = '';
+  list.innerHTML = '';
+  allChunks.forEach(c => {
+    const el = document.createElement('div');
+    el.className = 'chunk-item' + (relevant.includes(c.index) ? ' relevant' : '');
+    el.innerHTML = `<div class="chunk-tag">#${c.index+1} · ${c.length} chars</div>${c.text.slice(0,90)}...`;
+    list.appendChild(el);
+  });
+}
+
+// ── Ask / Stream ───────────────────────────────────────────────────────────────
+async function ask() {
+  if (busy || !indexed) return;
+  const q = $('qInput').value.trim();
+  if (!q) return;
+
+  busy = true;
+  $('qInput').value = '';
+  $('qInput').style.height = 'auto';
+  $('sendBtn').disabled = true;
+
+  // Remove empty state
+  const empty = $('emptyState');
+  if (empty) empty.remove();
+
+  // User message
+  appendMsg('u', 'You', q, [], []);
+
+  // AI message shell
+  const aiId = 'msg-' + Date.now();
+  const chat = $('chat');
+  const shell = document.createElement('div');
+  shell.className = 'msg';
+  shell.id = aiId;
+  shell.innerHTML = `
+    <div class="av a">AI</div>
+    <div class="mb">
+      <div class="mm">
+        <span class="mn">CarRAG · ${model()}</span>
+        <span class="mt">${now()}</span>
+      </div>
+      <div class="mc" id="mc-${aiId}">
+        <span class="dots"><span>●</span><span>●</span><span>●</span></span>
+      </div>
+      <div id="pipe-${aiId}"></div>
+      <div id="src-${aiId}"></div>
+    </div>`;
+  chat.appendChild(shell);
+  chat.scrollTop = chat.scrollHeight;
+
+  // Pipeline — embed step active
+  const pipeEl = $(`pipe-${aiId}`);
+  const steps = ['embed query', `retrieve top-${$('topK').value} cars`, 'build car prompt', 'generate'];
+
+  function setPipe(active) {
+    pipeEl.innerHTML = `<div class="pipeline">${steps.map((s,i) => {
+      const cls = i < active ? 'ps' : (i === active ? 'ps active' : '');
+      return `${i > 0 ? '<span class="pa">→</span>' : ''}
+        ${cls ? `<span class="${cls}"><span class="pd"></span>${s}</span>` : ''}`;
+    }).join('')}</div>`;
+  }
+
+  setPipe(0);
+
+  try {
+    const res = await fetch('/api/query/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question: q,
+        top_k: parseInt($('topK').value),
+        ollama_url: $('ollamaUrl').value,
+        model: model(),
+        temperature: parseInt($('temp').value) / 10
+      })
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let mcEl = $(`mc-${aiId}`);
+    let buffer = '';
+    let sources = [];
+    let answer = '';
+    let streaming = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const ev = JSON.parse(line.slice(6));
+
+          if (ev.type === 'sources') {
+            sources = ev.sources;
+            setPipe(1);
+            renderChunks(sources.map(s => s.index));
+            // Show sources
+            $(`src-${aiId}`).innerHTML = `<div class="sources">${sources.map(s =>
+              `<div class="src"><div class="src-lbl">CAR PROFILE #${s.index+1}</div>
+              ${s.chunk.slice(0,80)}...<div class="src-sim">sim: ${s.score.toFixed(3)}</div></div>`
+            ).join('')}</div>`;
+          }
+
+          if (ev.type === 'token') {
+            setPipe(3);
+            if (!streaming) {
+              mcEl.innerHTML = '';
+              streaming = true;
+            }
+            answer += ev.text;
+            mcEl.innerHTML = answer.replace(/\n/g, '<br>') + '<span class="cursor"></span>';
+            chat.scrollTop = chat.scrollHeight;
+          }
+
+          if (ev.type === 'done') {
+            mcEl.innerHTML = answer.replace(/\n/g, '<br>');
+            setPipe(4);
+          }
+
+          if (ev.type === 'error') {
+            mcEl.innerHTML = `<span style="color:var(--red)">Error: ${ev.message}</span>`;
+          }
+        } catch(_) {}
+      }
+    }
+
+  } catch(e) {
+    $(`mc-${aiId}`).innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>
+      <br><span style="font-size:12px;color:var(--text3)">Make sure Ollama is running and the server is up.</span>`;
+  }
+
+  busy = false;
+  $('sendBtn').disabled = false;
+}
+
+function appendMsg(role, name, content, sources, pipe) {
+  const empty = $('emptyState');
+  if (empty) empty.remove();
+  const chat = $('chat');
+  const el = document.createElement('div');
+  el.className = 'msg';
+  el.innerHTML = `
+    <div class="av ${role}">${role === 'u' ? 'U' : 'AI'}</div>
+    <div class="mb">
+      <div class="mm">
+        <span class="mn">${name}</span>
+        <span class="mt">${now()}</span>
+      </div>
+      <div class="mc"><p>${content}</p></div>
+    </div>`;
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// Init
+$('modelBadge').textContent = model();
+toggleSrc();
+testOllama();
+</script>
+</body>
+</html>
