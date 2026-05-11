@@ -3,43 +3,74 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CarRAG Studio — Cars Intelligence</title>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&family=Instrument+Sans:wght@400;500&display=swap" rel="stylesheet">
+<title>NIDIX AI — Automotive Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;500&family=Sora:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #0a0a0f;
-  --surface: #111118;
-  --surface2: #1a1a24;
-  --surface3: #22222f;
-  --border: rgba(255,255,255,0.07);
-  --border2: rgba(255,255,255,0.13);
-  --accent: #f97316;
-  --accent2: #fb923c;
-  --accent3: #f59e0b;
+  --bg: #08090d;
+  --surface: #10141b;
+  --surface2: #171d26;
+  --surface3: #222a36;
+  --border: rgba(255,255,255,0.08);
+  --border2: rgba(255,255,255,0.18);
+  --accent: #ff3b30;
+  --accent2: #ff7a18;
+  --accent3: #ffd166;
   --teal: #2dd4bf;
   --amber: #fbbf24;
-  --red: #f87171;
-  --text: #f0effe;
-  --text2: #9d9bc0;
-  --text3: #5a5878;
-  --success: #34d399;
-  --mono: 'JetBrains Mono', monospace;
-  --sans: 'Instrument Sans', sans-serif;
-  --display: 'Syne', sans-serif;
+  --red: #ff6b6b;
+  --text: #f5f7ff;
+  --text2: #c0c6d4;
+  --text3: #7a8192;
+  --success: #3ddc97;
+  --mono: 'Space Mono', monospace;
+  --sans: 'Sora', sans-serif;
+  --display: 'Bebas Neue', sans-serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
   font-family: var(--sans);
-  background: var(--bg);
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(255,122,24,0.25), transparent 60%),
+    radial-gradient(900px 500px at -10% 20%, rgba(255,59,48,0.25), transparent 55%),
+    linear-gradient(180deg, #0b0f16 0%, #08090d 70%);
   color: var(--text);
   height: 100vh;
   display: grid;
   grid-template-columns: 290px 1fr;
   grid-template-rows: 56px 1fr;
   overflow: hidden;
+  position: relative;
+  isolation: isolate;
 }
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(120deg, rgba(255,255,255,0.04) 0 2px, transparent 2px 14px);
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  left: -10%;
+  right: -10%;
+  top: 18%;
+  height: 120px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+  transform: skewY(-2deg);
+  opacity: 0.25;
+  pointer-events: none;
+  z-index: 0;
+}
+
+body > * { position: relative; z-index: 1; }
 
 /* ── HEADER ── */
 header {
@@ -55,21 +86,25 @@ header {
 
 .logo {
   font-family: var(--display);
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 800;
-  letter-spacing: -0.5px;
-  background: linear-gradient(135deg, var(--accent2), var(--accent3));
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  text-shadow: 0 6px 16px rgba(255,59,48,0.3);
 }
 
 .logo-sep { width: 1px; height: 20px; background: var(--border2); }
 
 .header-sub {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text3);
   font-family: var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .header-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
@@ -77,7 +112,7 @@ header {
 .status-pill {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 12px;
-  background: var(--surface2);
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
   border: 1px solid var(--border);
   border-radius: 100px;
   font-size: 11px;
@@ -98,8 +133,8 @@ header {
 
 .model-badge {
   padding: 5px 12px;
-  background: rgba(124,109,240,.12);
-  border: 1px solid rgba(124,109,240,.25);
+  background: rgba(255,59,48,0.12);
+  border: 1px solid rgba(255,59,48,0.35);
   border-radius: 100px;
   font-size: 11px;
   color: var(--accent2);
@@ -177,13 +212,14 @@ aside {
 
 .btn {
   width: 100%; padding: 8px 12px;
-  background: var(--accent); border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none;
   border-radius: 7px; color: #fff;
   font-family: var(--display);
   font-size: 12px; font-weight: 600;
   cursor: pointer; transition: all .2s;
+  box-shadow: 0 8px 18px rgba(255,59,48,0.2);
 }
-.btn:hover { background: var(--accent2); transform: translateY(-1px); }
+.btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
 .btn:active { transform: none; }
 .btn:disabled { background: var(--surface3); color: var(--text3); cursor: not-allowed; transform: none; }
 
@@ -237,9 +273,11 @@ main {
 .bg-grid {
   position: absolute; inset: 0; pointer-events: none;
   background-image:
-    linear-gradient(rgba(124,109,240,.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(124,109,240,.03) 1px, transparent 1px);
-  background-size: 40px 40px;
+    linear-gradient(120deg, rgba(255,59,48,0.12), transparent 55%),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 18px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.03) 0 1px, transparent 1px 18px);
+  background-size: auto;
+  opacity: 0.7;
 }
 
 /* chat */
@@ -259,11 +297,13 @@ main {
 
 .empty-icon {
   width: 60px; height: 60px;
-  background: radial-gradient(circle, rgba(124,109,240,.18), transparent 70%);
-  border: 1px solid rgba(124,109,240,.2);
+  background: radial-gradient(circle, rgba(255,59,48,0.22), transparent 70%);
+  border: 1px solid rgba(255,59,48,0.3);
   border-radius: 14px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 26px;
+  font-size: 22px;
+  font-family: var(--display);
+  letter-spacing: 1px;
 }
 
 .empty-title { font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: -.5px; }
@@ -278,7 +318,7 @@ main {
   font-size: 12px; color: var(--text2);
   cursor: pointer; transition: all .2s;
 }
-.pill:hover { border-color: var(--accent); color: var(--accent2); background: rgba(124,109,240,.07); }
+.pill:hover { border-color: var(--accent); color: var(--accent2); background: rgba(255,59,48,0.07); }
 
 /* messages */
 .msg { display: flex; gap: 11px; animation: fadeUp .3s ease; }
@@ -291,8 +331,8 @@ main {
   font-size: 12px; font-weight: 700;
   font-family: var(--mono);
 }
-.av.u { background: rgba(124,109,240,.15); color: var(--accent2); border: 1px solid rgba(124,109,240,.2); }
-.av.a { background: rgba(45,212,191,.1); color: var(--teal); border: 1px solid rgba(45,212,191,.15); }
+.av.u { background: rgba(255,59,48,0.12); color: var(--accent2); border: 1px solid rgba(255,59,48,0.2); }
+.av.a { background: rgba(45,212,191,0.12); color: var(--teal); border: 1px solid rgba(45,212,191,0.2); }
 
 .mb { flex: 1; min-width: 0; }
 
@@ -338,8 +378,8 @@ main {
   color: var(--success);
 }
 .ps.active {
-  background: rgba(124,109,240,.1);
-  border-color: rgba(124,109,240,.3);
+  background: rgba(255,59,48,0.12);
+  border-color: rgba(255,59,48,0.35);
   color: var(--accent2);
   animation: pulse 1s infinite;
 }
@@ -390,7 +430,7 @@ main {
 
 .send {
   width: 34px; height: 34px;
-  background: var(--accent); border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none;
   border-radius: 8px; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; transition: all .2s; color: #fff;
@@ -427,9 +467,9 @@ main {
 
 <!-- HEADER -->
 <header>
-  <div class="logo">CarRAG Studio</div>
+  <div class="logo">NIDIX AI</div>
   <div class="logo-sep"></div>
-  <div class="header-sub">Cars knowledge assistant · MongoDB + Ollama</div>
+  <div class="header-sub">Performance car intelligence · MongoDB + Ollama</div>
   <div class="header-right">
     <div class="status-pill" onclick="testOllama()" title="Click to test connection">
       <div class="status-dot" id="dot"></div>
@@ -443,7 +483,7 @@ main {
 <aside>
   <!-- Ollama -->
   <div class="s-sec">
-    <div class="s-label">⬡ Ollama Config</div>
+    <div class="s-label">Engine Control</div>
     <div class="fg">
       <label>Base URL</label>
       <input id="ollamaUrl" value="http://localhost:11434">
@@ -460,6 +500,7 @@ main {
         <option value="phi3">phi3</option>
         <option value="phi4">phi4</option>
         <option value="qwen2.5">qwen2.5</option>
+        <option value="qwen2.5:7b">qwen2.5:7b</option>
         <option value="deepseek-r1:7b">deepseek-r1:7b</option>
         <option value="custom">custom...</option>
       </select>
@@ -471,82 +512,51 @@ main {
     <button class="btn-ghost" onclick="testOllama()">↺ Test connection</button>
   </div>
 
-  <!-- Document -->
+  <!-- Index -->
   <div class="s-sec">
-    <div class="s-label">◈ Cars Data Source</div>
-    <div class="fg">
-      <label>Source type</label>
-      <select id="srcType" onchange="toggleSrc()">
-        <option value="mongodb">MongoDB (Nidix.cars)</option>
-        <option value="url">Web URL</option>
-        <option value="text">Paste text</option>
-      </select>
-    </div>
-    <div class="fg" id="mongoGrp">
-      <label>Mongo URI</label>
-      <input id="mongoUri" value="mongodb://localhost:27017">
-    </div>
-    <div class="fg" id="mongoDbGrp">
-      <label>Mongo DB</label>
-      <input id="mongoDb" value="Nidix">
-    </div>
-    <div class="fg" id="mongoColGrp">
-      <label>Collection</label>
-      <input id="mongoCol" value="cars">
-    </div>
-    <div class="fg" id="urlGrp" style="display:none">
-      <label>URL</label>
-      <input id="docUrl" value="https://en.wikipedia.org/wiki/Artificial_intelligence">
-    </div>
-    <div class="fg" id="textGrp" style="display:none">
-      <label>Paste document</label>
-      <textarea id="docText" rows="5" placeholder="Paste your text here..."></textarea>
-    </div>
+    <div class="s-label">Pit Stop</div>
     <button class="btn" id="idxBtn" onclick="indexDoc()">Index Cars Collection</button>
     <div class="prog" id="prog"><div class="prog-fill" id="progFill"></div></div>
+    <input type="hidden" id="mongoUri" value="mongodb://localhost:27017">
+    <input type="hidden" id="mongoDb" value="Nidix">
+    <input type="hidden" id="mongoCol" value="cars2">
   </div>
 
   <!-- RAG Params -->
   <div class="s-sec">
-    <div class="s-label">⊙ RAG Parameters</div>
+    <div class="s-label">RAG Parameters</div>
     <div class="fg">
       <label>Chunk size (chars, non-Mongo sources)</label>
       <div class="slider-row">
-        <input type="range" min="100" max="2000" value="500" step="100" id="chunkSize"
+        <input type="range" min="100" max="2000" value="300" step="100" id="chunkSize"
           oninput="document.getElementById('csv').textContent=this.value">
-        <span class="sv" id="csv">500</span>
+        <span class="sv" id="csv">300</span>
       </div>
     </div>
     <div class="fg">
       <label>Chunk overlap (non-Mongo sources)</label>
       <div class="slider-row">
-        <input type="range" min="0" max="200" value="50" step="10" id="chunkOvlp"
+        <input type="range" min="0" max="200" value="30" step="10" id="chunkOvlp"
           oninput="document.getElementById('cov').textContent=this.value">
-        <span class="sv" id="cov">50</span>
+        <span class="sv" id="cov">30</span>
       </div>
     </div>
     <div class="fg">
       <label>Top-K chunks</label>
       <div class="slider-row">
-        <input type="range" min="1" max="8" value="3" step="1" id="topK"
+        <input type="range" min="1" max="8" value="5" step="1" id="topK"
           oninput="document.getElementById('tkv').textContent=this.value">
-        <span class="sv" id="tkv">3</span>
+        <span class="sv" id="tkv">5</span>
       </div>
     </div>
     <div class="fg">
       <label>Temperature</label>
       <div class="slider-row">
-        <input type="range" min="0" max="10" value="3" step="1" id="temp"
+        <input type="range" min="0" max="10" value="7" step="1" id="temp"
           oninput="document.getElementById('tv').textContent=(this.value/10).toFixed(1)">
-        <span class="sv" id="tv">0.3</span>
+        <span class="sv" id="tv">0.7</span>
       </div>
     </div>
-  </div>
-
-  <!-- Chunks preview -->
-  <div class="s-sec" id="chunksSec" style="display:none">
-    <div class="s-label">▤ Indexed Car Profiles (<span id="chunkCnt">0</span>)</div>
-    <div class="chunk-list" id="chunkList"></div>
   </div>
 </aside>
 
@@ -556,14 +566,14 @@ main {
 
   <div class="chat" id="chat">
     <div class="empty" id="emptyState">
-      <div class="empty-icon">◈</div>
-      <div class="empty-title">CarRAG Assistant</div>
-      <div class="empty-sub">Index your `Nidix.cars` MongoDB collection, then ask for car specs, ranking, and side-by-side comparisons based only on your data.</div>
+      <div class="empty-icon">N</div>
+      <div class="empty-title">NIDIX AI Garage</div>
+      <div class="empty-sub">Index your `Nidix.cars` MongoDB collection, then ask for specs, rankings, and side-by-side comparisons grounded in your data.</div>
       <div class="pills">
         <div class="pill" onclick="useQ(this)">Compare Toyota Yaris vs Renault Clio (price, power, consumption)</div>
-        <div class="pill" onclick="useQ(this)">Which cars are the cheapest with automatic transmission?</div>
-        <div class="pill" onclick="useQ(this)">Top 5 cars by best fuel economy and low CO2</div>
-        <div class="pill" onclick="useQ(this)">Show electric models with highest autonomy</div>
+        <div class="pill" onclick="useQ(this)">Show the cheapest cars with automatic transmission</div>
+        <div class="pill" onclick="useQ(this)">Top 5 cars by fuel economy and low CO2</div>
+        <div class="pill" onclick="useQ(this)">Best electric range models in the collection</div>
       </div>
     </div>
   </div>
@@ -580,7 +590,7 @@ main {
         </svg>
       </button>
     </div>
-    <div class="inp-hint">Index cars first · Enter to send · Shift+Enter for newline</div>
+    <div class="inp-hint">Index cars collection first · Enter to send · Shift+Enter for newline</div>
   </div>
 </main>
 
@@ -612,15 +622,6 @@ function model() {
 function onModelChange() {
   $('customGrp').style.display = $('modelSel').value === 'custom' ? '' : 'none';
   $('modelBadge').textContent = model();
-}
-
-function toggleSrc() {
-  const t = $('srcType').value;
-  $('mongoGrp').style.display = t === 'mongodb' ? '' : 'none';
-  $('mongoDbGrp').style.display = t === 'mongodb' ? '' : 'none';
-  $('mongoColGrp').style.display = t === 'mongodb' ? '' : 'none';
-  $('urlGrp').style.display = t === 'url' ? '' : 'none';
-  $('textGrp').style.display = t === 'text' ? '' : 'none';
 }
 
 function useQ(el) {
@@ -672,19 +673,9 @@ async function indexDoc() {
   prog.style.display = '';
   fill.style.width = '20%';
 
-  const srcType = $('srcType').value;
-  const content =
-    srcType === 'url'
-      ? $('docUrl').value.trim()
-      : (srcType === 'text' ? $('docText').value.trim() : '');
-
-  if ((srcType === 'url' || srcType === 'text') && !content) {
-    toast('Please provide a URL or text source.', 'err');
-    btn.disabled = false;
-    btn.textContent = 'Index Cars Collection';
-    prog.style.display = 'none';
-    return;
-  }
+  const mongoUri = $('mongoUri') ? $('mongoUri').value.trim() : 'mongodb://localhost:27017';
+  const mongoDb = $('mongoDb') ? $('mongoDb').value.trim() : 'Nidix';
+  const mongoCol = $('mongoCol') ? $('mongoCol').value.trim() : 'cars';
 
   try {
     fill.style.width = '50%';
@@ -692,13 +683,13 @@ async function indexDoc() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        source_type: srcType,
-        content,
+        source_type: 'mongodb',
+        content: '',
         chunk_size: parseInt($('chunkSize').value),
         chunk_overlap: parseInt($('chunkOvlp').value),
-        mongo_uri: $('mongoUri').value.trim(),
-        mongo_db: $('mongoDb').value.trim(),
-        mongo_collection: $('mongoCol').value.trim()
+        mongo_uri: mongoUri,
+        mongo_db: mongoDb,
+        mongo_collection: mongoCol
       })
     });
 
@@ -726,6 +717,7 @@ async function indexDoc() {
 function renderChunks(relevant = []) {
   const sec = $('chunksSec');
   const list = $('chunkList');
+  if (!sec || !list) return;
   $('chunkCnt').textContent = allChunks.length;
   sec.style.display = '';
   list.innerHTML = '';
@@ -765,7 +757,7 @@ async function ask() {
     <div class="av a">AI</div>
     <div class="mb">
       <div class="mm">
-        <span class="mn">CarRAG · ${model()}</span>
+        <span class="mn">NIDIX AI · ${model()}</span>
         <span class="mt">${now()}</span>
       </div>
       <div class="mc" id="mc-${aiId}">
@@ -889,7 +881,6 @@ function appendMsg(role, name, content, sources, pipe) {
 
 // Init
 $('modelBadge').textContent = model();
-toggleSrc();
 testOllama();
 </script>
 </body>
