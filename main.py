@@ -30,6 +30,12 @@ app = FastAPI(title="RAG Studio", version="1.0.0")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
+# Prompt size tuning (helps response time for large models).
+MAX_CHUNK_CHARS = 1200
+MAX_CONTEXT_CHARS = 6000
+DEFAULT_NUM_PREDICT = 256
+OLLAMA_KEEP_ALIVE = "10m"
+
 # ─── In-memory vector store ───────────────────────────────────────────────────
 class VectorStore:
     def __init__(self):
@@ -166,7 +172,7 @@ class IndexRequest(BaseModel):
     chunk_overlap: int = 50
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db: str = "Nidix"
-    mongo_collection: str = "cars"
+    mongo_collection: str = "cars2"
     mongo_limit: Optional[int] = None
 
 
@@ -176,6 +182,7 @@ class QueryRequest(BaseModel):
     ollama_url: str = "http://localhost:11434"
     model: str = "llama3.2"
     temperature: float = 0.3
+    max_tokens: int = DEFAULT_NUM_PREDICT
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -202,6 +209,33 @@ def _normalize_text(value: str) -> str:
     normalized = re.sub(r"[_\-/:]", " ", normalized)
     normalized = re.sub(r"[^\w\s]", " ", normalized)
     return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _trim_chunk_for_prompt(chunk: str, max_chars: int = MAX_CHUNK_CHARS) -> str:
+    # Drop raw JSON payloads and clamp size to reduce prompt latency.
+    if "raw_json:" in chunk:
+        chunk = chunk.split("raw_json:", 1)[0].rstrip()
+    if len(chunk) <= max_chars:
+        return chunk
+    trimmed = chunk[:max_chars]
+    last_space = trimmed.rfind(" ")
+    if last_space > 200:
+        trimmed = trimmed[:last_space]
+    return trimmed.rstrip() + "..."
+
+
+def _build_context(results: list[dict], max_context_chars: int = MAX_CONTEXT_CHARS) -> str:
+    parts = []
+    total = 0
+    for i, r in enumerate(results):
+        chunk_text = _trim_chunk_for_prompt(r["chunk"])
+        entry = f"[{i+1}] {chunk_text}"
+        entry_len = len(entry) + 2
+        if parts and total + entry_len > max_context_chars:
+            break
+        parts.append(entry)
+        total += entry_len
+    return "\n\n".join(parts)
 
 
 def _car_doc_to_chunk(doc: dict, index: int) -> str:
@@ -451,9 +485,7 @@ async def query_document(req: QueryRequest):
 
     # Retrieve
     results = vector_store.retrieve(req.question, req.top_k)
-    context = "\n\n".join(
-        f"[{i+1}] {r['chunk']}" for i, r in enumerate(results)
-    )
+    context = _build_context(results)
 
     prompt = build_car_rag_prompt(req.question, context)
 
@@ -466,7 +498,11 @@ async def query_document(req: QueryRequest):
                     "model": req.model,
                     "prompt": prompt,
                     "stream": False,
-                    "options": {"temperature": req.temperature}
+                    "keep_alive": OLLAMA_KEEP_ALIVE,
+                    "options": {
+                        "temperature": req.temperature,
+                        "num_predict": max(1, req.max_tokens)
+                    }
                 }
             )
             response.raise_for_status()
@@ -503,7 +539,7 @@ async def query_stream(req: QueryRequest):
         return StreamingResponse(deterministic_stream(), media_type="text/event-stream")
 
     results = vector_store.retrieve(req.question, req.top_k)
-    context = "\n\n".join(f"[{i+1}] {r['chunk']}" for i, r in enumerate(results))
+    context = _build_context(results)
 
     prompt = build_car_rag_prompt(req.question, context)
 
@@ -516,8 +552,16 @@ async def query_stream(req: QueryRequest):
                 async with client.stream(
                     "POST",
                     f"{req.ollama_url}/api/generate",
-                    json={"model": req.model, "prompt": prompt, "stream": True,
-                          "options": {"temperature": req.temperature}}
+                    json={
+                        "model": req.model,
+                        "prompt": prompt,
+                        "stream": True,
+                        "keep_alive": OLLAMA_KEEP_ALIVE,
+                        "options": {
+                            "temperature": req.temperature,
+                            "num_predict": max(1, req.max_tokens)
+                        }
+                    }
                 ) as r:
                     async for line in r.aiter_lines():
                         if line:
