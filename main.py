@@ -1,6 +1,6 @@
 """
 RAG Studio — FastAPI Backend
-Retrieval-Augmented Generation with Ollama
+Retrieval-Augmented Generation with Groq
 """
 
 from fastapi import FastAPI, Request, HTTPException
@@ -9,14 +9,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from typing import Optional
+import os
 import httpx
 import json
 import re
-import math
 import asyncio
-from collections import Counter
 import logging
 import unicodedata
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
 
 try:
     from pymongo import MongoClient
@@ -34,78 +37,184 @@ templates = Jinja2Templates(directory="templates")
 MAX_CHUNK_CHARS = 1200
 MAX_CONTEXT_CHARS = 6000
 DEFAULT_NUM_PREDICT = 256
-OLLAMA_KEEP_ALIVE = "10m"
+# Groq API config
+DEFAULT_GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_VECTOR_COLLECTION = "car_vectors"
+GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# ─── In-memory vector store ───────────────────────────────────────────────────
+# ─── Mongo-backed vector store (embeddings) ───────────────────────────────────
+_embedding_model = None
+
+
+def _get_embedding_model():
+    if SentenceTransformer is None:
+        raise HTTPException(
+            500,
+            "sentence-transformers is not installed. Run: pip install sentence-transformers"
+        )
+    global _embedding_model
+    if _embedding_model is None:
+        _embedding_model = SentenceTransformer(DEFAULT_EMBEDDING_MODEL)
+    return _embedding_model
+
+
+def _embed_texts(texts: list[str]) -> list[list[float]]:
+    model = _get_embedding_model()
+    return model.encode(texts, normalize_embeddings=True).tolist()
+
+
 class VectorStore:
     def __init__(self):
         self.chunks: list[str] = []
-        self.tfidf_matrix: list[dict] = []
-        self.df: dict = {}
+        self.embeddings: list[list[float]] = []
         self.source: str = ""
         self.car_records: list[dict] = []
+        self.mongo_uri: str = ""
+        self.mongo_db: str = ""
+        self.vector_collection: str = DEFAULT_VECTOR_COLLECTION
 
     def clear(self):
         self.chunks = []
-        self.tfidf_matrix = []
-        self.df = {}
+        self.embeddings = []
         self.source = ""
         self.car_records = []
+        self.mongo_uri = ""
+        self.mongo_db = ""
+        self.vector_collection = DEFAULT_VECTOR_COLLECTION
 
-    def tokenize(self, text: str) -> list[str]:
-        normalized = unicodedata.normalize("NFKD", text.lower())
-        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-        cleaned = re.sub(r"[_\-/:]", " ", normalized)
-        cleaned = re.sub(r"[^\w\s]", " ", cleaned)
-        return cleaned.split()
-
-    def build(self, chunks: list[str], source: str = ""):
+    def build(
+        self,
+        chunks: list[str],
+        source: str = "",
+        mongo_uri: str = "",
+        mongo_db: str = "",
+        vector_collection: str = DEFAULT_VECTOR_COLLECTION
+    ):
         self.chunks = chunks
         self.source = source
-        N = len(chunks)
-        tokenized = [self.tokenize(c) for c in chunks]
+        self.mongo_uri = mongo_uri
+        self.mongo_db = mongo_db
+        self.vector_collection = vector_collection or DEFAULT_VECTOR_COLLECTION
 
-        # Document frequency
-        self.df = {}
-        for tokens in tokenized:
-            for t in set(tokens):
-                self.df[t] = self.df.get(t, 0) + 1
+        self.embeddings = _embed_texts(chunks)
+        if self.mongo_uri and self.mongo_db:
+            self._persist_vectors()
 
-        # TF-IDF vectors
-        self.tfidf_matrix = []
-        for tokens in tokenized:
-            tf = Counter(tokens)
-            total = len(tokens) or 1
-            vec = {
-                t: (count / total) * math.log((N + 1) / (self.df.get(t, 0) + 1))
-                for t, count in tf.items()
-            }
-            self.tfidf_matrix.append(vec)
+    def _persist_vectors(self):
+        if MongoClient is None:
+            raise HTTPException(
+                500,
+                "pymongo is not installed. Run: pip install pymongo"
+            )
 
-    def cosine_sim(self, a: dict, b: dict) -> float:
-        keys = set(a) | set(b)
-        dot = sum(a.get(k, 0) * b.get(k, 0) for k in keys)
-        norm_a = math.sqrt(sum(v**2 for v in a.values()))
-        norm_b = math.sqrt(sum(v**2 for v in b.values()))
-        if not norm_a or not norm_b:
-            return 0.0
-        return dot / (norm_a * norm_b)
+        client = None
+        try:
+            client = MongoClient(self.mongo_uri, serverSelectionTimeoutMS=5000)
+            client.admin.command("ping")
+            collection = client[self.mongo_db][self.vector_collection]
 
-    def retrieve(self, query: str, top_k: int = 3) -> list[dict]:
-        if not self.chunks:
-            return []
-        q_tokens = self.tokenize(query)
-        N = len(self.chunks)
-        tf = Counter(q_tokens)
-        total = len(q_tokens) or 1
-        q_vec = {
-            t: (count / total) * math.log((N + 1) / (self.df.get(t, 0) + 1))
-            for t, count in tf.items()
-        }
-        scored = [
-            {"index": i, "chunk": self.chunks[i], "score": self.cosine_sim(q_vec, vec)}
-            for i, vec in enumerate(self.tfidf_matrix)
-        ]
+            collection.delete_many({})
+            docs = []
+            for i, (chunk, embedding) in enumerate(zip(self.chunks, self.embeddings)):
+                docs.append({
+                    "index": i,
+                    "chunk": chunk,
+                    "embedding": embedding,
+                    "source": self.source
+                })
+            if docs:
+                collection.insert_many(docs)
+        except Exception as exc:
+            raise HTTPException(400, f"MongoDB error: {str(exc)}")
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+    def load_from_mongo(
+        self,
+        mongo_uri: str,
+        mongo_db: str,
+        vector_collection: str
+    ):
+        if MongoClient is None:
+            raise HTTPException(
+                500,
+                "pymongo is not installed. Run: pip install pymongo"
+            )
+
+        client = None
+        try:
+            client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+            client.admin.command("ping")
+            collection = client[mongo_db][vector_collection]
+            docs = list(collection.find({}, {
+                "_id": 0,
+                "index": 1,
+                "chunk": 1,
+                "embedding": 1,
+                "source": 1
+            }))
+            if not docs:
+                raise HTTPException(
+                    400,
+                    f"No vectors found in {mongo_db}.{vector_collection}."
+                )
+
+            docs.sort(key=lambda d: d.get("index", 0))
+            self.chunks = [d.get("chunk", "") for d in docs]
+            self.embeddings = [d.get("embedding", []) for d in docs]
+            self.source = docs[0].get("source", "")
+            self.mongo_uri = mongo_uri
+            self.mongo_db = mongo_db
+            self.vector_collection = vector_collection
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(400, f"MongoDB error: {str(exc)}")
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+    def _dot(self, a: list[float], b: list[float]) -> float:
+        return sum(x * y for x, y in zip(a, b))
+
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 3,
+        mongo_uri: str = "",
+        mongo_db: str = "",
+        vector_collection: str = ""
+    ) -> list[dict]:
+        if not self.embeddings:
+            if mongo_uri and mongo_db:
+                self.load_from_mongo(
+                    mongo_uri=mongo_uri,
+                    mongo_db=mongo_db,
+                    vector_collection=vector_collection or DEFAULT_VECTOR_COLLECTION
+                )
+            else:
+                return []
+
+        q_vec = _embed_texts([query])[0]
+        scored = []
+        for i, embedding in enumerate(self.embeddings):
+            if not embedding:
+                continue
+            score = self._dot(q_vec, embedding)
+            scored.append({
+                "index": i,
+                "chunk": self.chunks[i],
+                "score": float(score)
+            })
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored[:top_k]
 
@@ -173,16 +282,20 @@ class IndexRequest(BaseModel):
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db: str = "Nidix"
     mongo_collection: str = "cars2"
+    vector_collection: str = DEFAULT_VECTOR_COLLECTION
     mongo_limit: Optional[int] = None
 
 
 class QueryRequest(BaseModel):
     question: str
     top_k: int = 5
-    ollama_url: str = "http://localhost:11434"
-    model: str = "llama3.2"
-    temperature: float = 0.3
+    model: str = DEFAULT_GROQ_MODEL
+    temperature: float = 0.5
     max_tokens: int = DEFAULT_NUM_PREDICT
+    groq_api_key: Optional[str] = None
+    mongo_uri: str = "mongodb://localhost:27017"
+    mongo_db: str = "Nidix"
+    vector_collection: str = DEFAULT_VECTOR_COLLECTION
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -370,9 +483,20 @@ async def index_document(req: IndexRequest):
             raise HTTPException(400, "No chunks were created from the selected source.")
 
         source_value = req.content
+        mongo_uri = ""
+        mongo_db = ""
         if req.source_type == "mongodb":
             source_value = f"mongodb://{req.mongo_db}/{req.mongo_collection}"
-        vector_store.build(chunks, source=source_value)
+            mongo_uri = req.mongo_uri
+            mongo_db = req.mongo_db
+
+        vector_store.build(
+            chunks,
+            source=source_value,
+            mongo_uri=mongo_uri,
+            mongo_db=mongo_db,
+            vector_collection=req.vector_collection
+        )
         logger.info(f"Indexed {len(chunks)} chunks from: {source_value[:60]}")
 
         return {
@@ -390,7 +514,7 @@ async def index_document(req: IndexRequest):
 
 
 def build_car_rag_prompt(question: str, context: str) -> str:
-    return f"""You are CarRAG, a specialized assistant for vehicle comparison and analysis.
+    return f"""You are CarRAG, a creative automotive advisor for vehicle comparison and analysis.
 You must answer using ONLY the CONTEXT below.
 
 Rules:
@@ -398,6 +522,11 @@ Rules:
 - Prefer exact values (price, power, consommation, emissions, autonomie) from context.
 - For comparisons, present both cars clearly and mention key differences.
 - Do not invent missing specs.
+- Avoid dumping raw fields; synthesize into an engaging, helpful response.
+
+Answer style:
+- Start with a short, engaging summary (2-4 sentences) with the key tradeoffs.
+- Then add a compact "Key evidence" list with exact specs from the context.
 
 CONTEXT:
 {context}
@@ -406,6 +535,38 @@ QUESTION:
 {question}
 
 ANSWER:"""
+
+
+def _resolve_groq_key(req_key: Optional[str]) -> str:
+    key = (req_key or "").strip() or DEFAULT_GROQ_API_KEY
+    if not key:
+        raise HTTPException(
+            500,
+            "Groq API key is missing. Set GROQ_API_KEY or pass groq_api_key."
+        )
+    return key
+
+
+async def _groq_chat_completion(
+    messages: list[dict],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    api_key: str
+) -> str:
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max(1, max_tokens)
+    }
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        response = await client.post(GROQ_CHAT_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
 
 def try_answer_dealers_question(question: str) -> Optional[dict]:
@@ -471,9 +632,6 @@ def try_answer_dealers_question(question: str) -> Optional[dict]:
 
 @app.post("/api/query")
 async def query_document(req: QueryRequest):
-    if not vector_store.chunks:
-        raise HTTPException(400, "No document indexed yet.")
-
     deterministic = try_answer_dealers_question(req.question)
     if deterministic is not None:
         return {
@@ -484,34 +642,34 @@ async def query_document(req: QueryRequest):
         }
 
     # Retrieve
-    results = vector_store.retrieve(req.question, req.top_k)
+    results = vector_store.retrieve(
+        req.question,
+        req.top_k,
+        mongo_uri=req.mongo_uri,
+        mongo_db=req.mongo_db,
+        vector_collection=req.vector_collection
+    )
+    if not results:
+        raise HTTPException(400, "No vectors indexed yet. Run indexing first.")
     context = _build_context(results)
 
     prompt = build_car_rag_prompt(req.question, context)
+    messages = [{"role": "user", "content": prompt}]
 
-    # Call Ollama
+    # Call Groq
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                f"{req.ollama_url}/api/generate",
-                json={
-                    "model": req.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "keep_alive": OLLAMA_KEEP_ALIVE,
-                    "options": {
-                        "temperature": req.temperature,
-                        "num_predict": max(1, req.max_tokens)
-                    }
-                }
-            )
-            response.raise_for_status()
-            data = response.json()
-            answer = data.get("response", "")
-    except httpx.ConnectError:
-        raise HTTPException(503, "Cannot connect to Ollama. Make sure it's running on the specified URL.")
+        api_key = _resolve_groq_key(req.groq_api_key)
+        answer = await _groq_chat_completion(
+            messages=messages,
+            model=req.model,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+            api_key=api_key
+        )
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(500, f"Groq error: {exc.response.text}")
     except Exception as e:
-        raise HTTPException(500, f"Ollama error: {str(e)}")
+        raise HTTPException(500, f"Groq error: {str(e)}")
 
     return {
         "answer": answer,
@@ -524,9 +682,6 @@ async def query_document(req: QueryRequest):
 @app.post("/api/query/stream")
 async def query_stream(req: QueryRequest):
     """Streaming version using SSE"""
-    if not vector_store.chunks:
-        raise HTTPException(400, "No document indexed yet.")
-
     deterministic = try_answer_dealers_question(req.question)
     if deterministic is not None:
         async def deterministic_stream():
@@ -538,9 +693,16 @@ async def query_stream(req: QueryRequest):
 
         return StreamingResponse(deterministic_stream(), media_type="text/event-stream")
 
-    results = vector_store.retrieve(req.question, req.top_k)
+    results = vector_store.retrieve(
+        req.question,
+        req.top_k,
+        mongo_uri=req.mongo_uri,
+        mongo_db=req.mongo_db,
+        vector_collection=req.vector_collection
+    )
+    if not results:
+        raise HTTPException(400, "No vectors indexed yet. Run indexing first.")
     context = _build_context(results)
-
     prompt = build_car_rag_prompt(req.question, context)
 
     async def stream_generator():
@@ -548,33 +710,38 @@ async def query_stream(req: QueryRequest):
         yield f"data: {json.dumps({'type': 'sources', 'sources': results})}\n\n"
 
         try:
+            api_key = _resolve_groq_key(req.groq_api_key)
+            payload = {
+                "model": req.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": req.temperature,
+                "max_tokens": max(1, req.max_tokens),
+                "stream": True
+            }
+            headers = {"Authorization": f"Bearer {api_key}"}
+
             async with httpx.AsyncClient(timeout=120) as client:
                 async with client.stream(
                     "POST",
-                    f"{req.ollama_url}/api/generate",
-                    json={
-                        "model": req.model,
-                        "prompt": prompt,
-                        "stream": True,
-                        "keep_alive": OLLAMA_KEEP_ALIVE,
-                        "options": {
-                            "temperature": req.temperature,
-                            "num_predict": max(1, req.max_tokens)
-                        }
-                    }
+                    GROQ_CHAT_URL,
+                    headers=headers,
+                    json=payload
                 ) as r:
                     async for line in r.aiter_lines():
-                        if line:
-                            try:
-                                data = json.loads(line)
-                                token = data.get("response", "")
-                                if token:
-                                    yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
-                                if data.get("done"):
-                                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                                    break
-                            except json.JSONDecodeError:
-                                continue
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:].strip()
+                        if data == "[DONE]":
+                            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                            break
+                        try:
+                            evt = json.loads(data)
+                            delta = evt.get("choices", [{}])[0].get("delta", {})
+                            token = delta.get("content", "")
+                            if token:
+                                yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
+                        except json.JSONDecodeError:
+                            continue
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -582,14 +749,22 @@ async def query_stream(req: QueryRequest):
 
 
 @app.get("/api/status")
-async def status(ollama_url: str = "http://localhost:11434"):
+async def status(groq_api_key: Optional[str] = None):
+    key = (groq_api_key or "").strip() or DEFAULT_GROQ_API_KEY
+    if not key:
+        return {"connected": False, "models": []}
+
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ollama_url}/api/tags")
+            r = await client.get(
+                "https://api.groq.com/openai/v1/models",
+                headers={"Authorization": f"Bearer {key}"}
+            )
+            r.raise_for_status()
             data = r.json()
-            models = [m["name"] for m in data.get("models", [])]
+            models = [m.get("id", "") for m in data.get("data", []) if m.get("id")]
             return {"connected": True, "models": models}
-    except:
+    except Exception:
         return {"connected": False, "models": []}
 
 
