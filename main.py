@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from typing import Optional
 import os
+import uuid
 import httpx
 import json
 import re
@@ -25,6 +26,15 @@ try:
     from pymongo import MongoClient
 except ImportError:
     MongoClient = None
+
+from report_service import (
+    build_pdf_report,
+    car_label,
+    extract_email,
+    find_car_in_records,
+    is_report_request,
+    send_report_email,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -221,6 +231,9 @@ class VectorStore:
 
 vector_store = VectorStore()
 
+# Pending PDF report flows: session_id -> {car_doc, car_label}
+_report_sessions: dict[str, dict] = {}
+
 
 # ─── Text processing ──────────────────────────────────────────────────────────
 def split_text(text: str, chunk_size: int, overlap: int) -> list[str]:
@@ -296,6 +309,7 @@ class QueryRequest(BaseModel):
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db: str = "Nidix"
     vector_collection: str = DEFAULT_VECTOR_COLLECTION
+    session_id: Optional[str] = None
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -630,8 +644,172 @@ def try_answer_dealers_question(question: str) -> Optional[dict]:
     return {"answer": answer, "sources": sources}
 
 
+def _report_retrieve(question: str, top_k: int, req: QueryRequest) -> list[dict]:
+    return vector_store.retrieve(
+        question,
+        top_k,
+        mongo_uri=req.mongo_uri,
+        mongo_db=req.mongo_db,
+        vector_collection=req.vector_collection,
+    )
+
+
+def try_handle_report_flow(req: QueryRequest) -> Optional[dict]:
+    """Handle PDF report requests and email collection (multi-turn)."""
+    if not vector_store.car_records:
+        return None
+
+    session_id = (req.session_id or "").strip() or str(uuid.uuid4())
+    question = req.question.strip()
+    email_in_message = extract_email(question)
+
+    pending = _report_sessions.get(session_id)
+    if pending and pending.get("awaiting_email"):
+        if is_report_request(question, _normalize_text) and not email_in_message:
+            _report_sessions.pop(session_id, None)
+            pending = None
+        elif not email_in_message:
+            label = pending.get("car_label", "this vehicle")
+            return {
+                "answer": (
+                    f"I still need your email address to send the PDF report for **{label}**. "
+                    "Please reply with a valid email (for example: name@example.com)."
+                ),
+                "sources": [],
+                "model": req.model,
+                "pipeline": ["awaiting email", "validate input"],
+                "session_id": session_id,
+                "report_state": "awaiting_email",
+            }
+
+        car_doc = pending["car_doc"]
+        label = pending.get("car_label", car_label(car_doc))
+        try:
+            pdf_bytes = build_pdf_report(car_doc)
+            send_report_email(email_in_message, car_doc, pdf_bytes)
+            _report_sessions.pop(session_id, None)
+            return {
+                "answer": (
+                    f"Done! I've sent the PDF vehicle report for **{label}** to **{email_in_message}**. "
+                    "Check your inbox (and spam folder if needed)."
+                ),
+                "sources": [],
+                "model": req.model,
+                "pipeline": ["generate PDF", "send email"],
+                "session_id": session_id,
+                "report_state": "sent",
+            }
+        except Exception as exc:
+            logger.exception("Failed to send report email")
+            return {
+                "answer": (
+                    f"I generated the report for **{label}** but could not send the email: {exc}. "
+                    "Ask your administrator to configure SMTP_USER and SMTP_PASSWORD."
+                ),
+                "sources": [],
+                "model": req.model,
+                "pipeline": ["generate PDF", "email failed"],
+                "session_id": session_id,
+                "report_state": "error",
+            }
+
+    if not is_report_request(question, _normalize_text):
+        return None
+
+    car_doc = find_car_in_records(
+        question,
+        vector_store.car_records,
+        _normalize_text,
+        retrieve_fn=lambda q, k: _report_retrieve(q, k, req),
+    )
+    if not car_doc:
+        return {
+            "answer": (
+                "I can prepare a PDF report and email it to you. "
+                "Please specify which car you want (for example: *Toyota Yaris* or *Renault Clio*), "
+                "then I'll ask for your email."
+            ),
+            "sources": [],
+            "model": req.model,
+            "pipeline": ["detect report request", "car not identified"],
+            "session_id": session_id,
+            "report_state": "need_car",
+        }
+
+    label = car_label(car_doc)
+
+    if email_in_message:
+        try:
+            pdf_bytes = build_pdf_report(car_doc)
+            send_report_email(email_in_message, car_doc, pdf_bytes)
+            return {
+                "answer": (
+                    f"Done! I've sent the PDF vehicle report for **{label}** to **{email_in_message}**."
+                ),
+                "sources": [],
+                "model": req.model,
+                "pipeline": ["generate PDF", "send email"],
+                "session_id": session_id,
+                "report_state": "sent",
+            }
+        except Exception as exc:
+            logger.exception("Failed to send report email")
+            return {
+                "answer": (
+                    f"I could not send the report: {exc}. "
+                    "Configure SMTP_USER and SMTP_PASSWORD on the server, then try again."
+                ),
+                "sources": [],
+                "model": req.model,
+                "pipeline": ["generate PDF", "email failed"],
+                "session_id": session_id,
+                "report_state": "error",
+            }
+
+    _report_sessions[session_id] = {
+        "awaiting_email": True,
+        "car_doc": car_doc,
+        "car_label": label,
+    }
+    return {
+        "answer": (
+            f"Sure! I can send you a detailed PDF report on the **{label}**. "
+            "What is your email address?"
+        ),
+        "sources": [],
+        "model": req.model,
+        "pipeline": ["detect report request", "identify car", "await email"],
+        "session_id": session_id,
+        "report_state": "awaiting_email",
+    }
+
+
+def _stream_deterministic_answer(payload: dict) -> StreamingResponse:
+    async def stream():
+        sources = payload.get("sources", [])
+        if sources:
+            yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
+        meta = {
+            "type": "meta",
+            "session_id": payload.get("session_id"),
+            "report_state": payload.get("report_state"),
+        }
+        if meta.get("session_id") or meta.get("report_state"):
+            yield f"data: {json.dumps(meta)}\n\n"
+        for part in payload["answer"].split(" "):
+            yield f"data: {json.dumps({'type': 'token', 'text': part + ' '})}\n\n"
+            await asyncio.sleep(0.005)
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
 @app.post("/api/query")
 async def query_document(req: QueryRequest):
+    report_result = try_handle_report_flow(req)
+    if report_result is not None:
+        return report_result
+
     deterministic = try_answer_dealers_question(req.question)
     if deterministic is not None:
         return {
@@ -682,16 +860,13 @@ async def query_document(req: QueryRequest):
 @app.post("/api/query/stream")
 async def query_stream(req: QueryRequest):
     """Streaming version using SSE"""
+    report_result = try_handle_report_flow(req)
+    if report_result is not None:
+        return _stream_deterministic_answer(report_result)
+
     deterministic = try_answer_dealers_question(req.question)
     if deterministic is not None:
-        async def deterministic_stream():
-            yield f"data: {json.dumps({'type': 'sources', 'sources': deterministic['sources']})}\n\n"
-            for part in deterministic["answer"].split(" "):
-                yield f"data: {json.dumps({'type': 'token', 'text': part + ' '})}\n\n"
-                await asyncio.sleep(0.005)
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-        return StreamingResponse(deterministic_stream(), media_type="text/event-stream")
+        return _stream_deterministic_answer(deterministic)
 
     results = vector_store.retrieve(
         req.question,

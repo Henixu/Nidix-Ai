@@ -568,6 +568,7 @@ main {
         <div class="pill" onclick="useQ(this)">Show the cheapest cars with automatic transmission</div>
         <div class="pill" onclick="useQ(this)">Top 5 cars by fuel economy and low CO2</div>
         <div class="pill" onclick="useQ(this)">Best electric range models in the collection</div>
+        <div class="pill" onclick="useQ(this)">Send me a PDF report on Toyota Yaris</div>
       </div>
     </div>
   </div>
@@ -584,7 +585,7 @@ main {
         </svg>
       </button>
     </div>
-    <div class="inp-hint">Index cars collection first · Enter to send · Shift+Enter for newline</div>
+    <div class="inp-hint">Index cars first · Request a PDF report on any car · Enter to send</div>
   </div>
 </main>
 
@@ -596,6 +597,18 @@ let indexed = false;
 let busy = false;
 let allChunks = [];
 let relevantIdx = [];
+let chatSessionId = localStorage.getItem('chatSessionId');
+if (!chatSessionId) {
+  chatSessionId = (crypto.randomUUID && crypto.randomUUID()) ||
+    ('sess-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+  localStorage.setItem('chatSessionId', chatSessionId);
+}
+
+function formatAnswer(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -808,7 +821,8 @@ async function ask() {
         groq_api_key: $('groqKey').value.trim(),
         mongo_uri: $('mongoUri').value.trim(),
         mongo_db: $('mongoDb').value.trim(),
-        vector_collection: $('mongoVecCol').value.trim() || 'car_vectors'
+        vector_collection: $('mongoVecCol').value.trim() || 'car_vectors',
+        session_id: chatSessionId
       })
     });
 
@@ -833,6 +847,13 @@ async function ask() {
         try {
           const ev = JSON.parse(line.slice(6));
 
+          if (ev.type === 'meta') {
+            if (ev.session_id) {
+              chatSessionId = ev.session_id;
+              localStorage.setItem('chatSessionId', chatSessionId);
+            }
+          }
+
           if (ev.type === 'sources') {
             sources = ev.sources;
             setPipe(1);
@@ -851,12 +872,12 @@ async function ask() {
               streaming = true;
             }
             answer += ev.text;
-            mcEl.innerHTML = answer.replace(/\n/g, '<br>') + '<span class="cursor"></span>';
+            mcEl.innerHTML = formatAnswer(answer) + '<span class="cursor"></span>';
             chat.scrollTop = chat.scrollHeight;
           }
 
           if (ev.type === 'done') {
-            mcEl.innerHTML = answer.replace(/\n/g, '<br>');
+            mcEl.innerHTML = formatAnswer(answer);
             setPipe(4);
           }
 

@@ -7,3 +7,4 @@ beautifulsoup4==4.12.3
 aiofiles==24.1.0
 pymongo==4.8.0
 sentence-transformers==2.7.0
+reportlab==4.2.5
