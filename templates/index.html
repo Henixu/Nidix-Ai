@@ -439,6 +439,78 @@ main {
 .send:disabled { background: var(--surface3); cursor: not-allowed; }
 .send svg { width: 15px; height: 15px; }
 
+.icon-btn {
+  width: 34px; height: 34px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: all .2s;
+  color: var(--text2);
+  padding: 0;
+}
+.icon-btn:hover { border-color: var(--accent); color: var(--accent2); }
+.icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.icon-btn svg { width: 16px; height: 16px; }
+
+.mic-btn.listening {
+  background: rgba(255, 59, 48, 0.2);
+  border-color: var(--accent);
+  color: var(--accent);
+  animation: micPulse 1.2s ease-in-out infinite;
+}
+.inp-wrap.listening { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.15); }
+
+@keyframes micPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+.voice-hint {
+  font-size: 10px;
+  color: var(--accent2);
+  font-family: var(--mono);
+  text-align: center;
+  margin-top: 4px;
+  display: none;
+}
+
+.voice-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text2);
+  margin-bottom: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.voice-check input { accent-color: var(--accent); width: 14px; height: 14px; }
+
+.msg-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.speak-btn {
+  width: auto;
+  min-width: 34px;
+  height: 30px;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: 10px;
+  font-family: var(--mono);
+}
+.speak-btn .speak-label { font-size: 10px; }
+.speak-btn.speaking {
+  background: rgba(45, 212, 191, 0.15);
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
 .inp-hint {
   font-size: 10px; color: var(--text3);
   font-family: var(--mono); margin-top: 7px; text-align: center;
@@ -503,6 +575,30 @@ main {
       <input id="customModel" placeholder="e.g. llama3.2:3b">
     </div>
     <button class="btn-ghost" onclick="testGroq()">↺ Test connection</button>
+  </div>
+
+  <!-- Voice -->
+  <div class="s-sec">
+    <div class="s-label">Voice</div>
+    <div class="fg">
+      <label>Speech language</label>
+      <select id="voiceLang">
+        <option value="fr-FR">Français</option>
+        <option value="en-US">English</option>
+        <option value="en-GB">English (UK)</option>
+      </select>
+    </div>
+    <label class="voice-check">
+      <input type="checkbox" id="autoSendVoice" checked>
+      Auto-send after I stop speaking
+    </label>
+    <label class="voice-check">
+      <input type="checkbox" id="autoSpeak">
+      Auto-read AI responses aloud
+    </label>
+    <div style="font-size:9px;color:var(--text3);font-family:var(--mono);line-height:1.5">
+      Mic &amp; listen work best in Chrome or Edge. Allow microphone access when prompted.
+    </div>
   </div>
 
   <!-- Index -->
@@ -575,8 +671,16 @@ main {
 
   <div class="inp-area">
     <div class="inp-wrap">
-      <textarea id="qInput" placeholder="Ask about cars: specs, prices, comparisons, rankings..."
+      <textarea id="qInput" placeholder="Type or tap the mic to speak..."
         rows="1" onkeydown="onKey(event)" oninput="resize(this)"></textarea>
+      <button type="button" class="icon-btn mic-btn" id="micBtn" title="Speak your question">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+        </svg>
+      </button>
       <button class="send" id="sendBtn" onclick="ask()" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round">
@@ -585,12 +689,14 @@ main {
         </svg>
       </button>
     </div>
-    <div class="inp-hint">Index cars first · Request a PDF report on any car · Enter to send</div>
+    <div class="voice-hint" id="voiceHint">Listening… speak now</div>
+    <div class="inp-hint">Mic to speak · Listen on each reply · Index cars first</div>
   </div>
 </main>
 
 <div class="toast" id="toast"></div>
 
+<script src="/static/voice.js"></script>
 <script>
 // ── State ──────────────────────────────────────────────────────────────────────
 let indexed = false;
@@ -760,6 +866,9 @@ async function ask() {
   const q = $('qInput').value.trim();
   if (!q) return;
 
+  if (typeof Voice !== 'undefined') Voice.stopListening(true);
+  if (typeof Voice !== 'undefined') Voice.stopSpeaking();
+
   busy = true;
   $('qInput').value = '';
   $('qInput').style.height = 'auto';
@@ -790,6 +899,9 @@ async function ask() {
       </div>
       <div id="pipe-${aiId}"></div>
       <div id="src-${aiId}"></div>
+      <div class="msg-actions" id="actions-${aiId}">
+        ${typeof Voice !== 'undefined' ? Voice.speakButtonHtml(aiId) : ''}
+      </div>
     </div>`;
   chat.appendChild(shell);
   chat.scrollTop = chat.scrollHeight;
@@ -878,7 +990,11 @@ async function ask() {
 
           if (ev.type === 'done') {
             mcEl.innerHTML = formatAnswer(answer);
+            mcEl.dataset.plainText = answer;
             setPipe(4);
+            if (typeof Voice !== 'undefined' && answer.trim()) {
+              Voice.maybeAutoSpeak(answer);
+            }
           }
 
           if (ev.type === 'error') {
@@ -920,6 +1036,16 @@ function appendMsg(role, name, content, sources, pipe) {
 $('modelBadge').textContent = model();
 loadGroqKey();
 testGroq(false);
+
+if (typeof Voice !== 'undefined') {
+  Voice.init({
+    getInput: () => $('qInput'),
+    resizeInput: resize,
+    onSend: () => ask(),
+    isBusy: () => busy,
+    toast: toast,
+  });
+}
 </script>
 </body>
 </html>
