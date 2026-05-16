@@ -38,9 +38,117 @@ body {
   color: var(--text);
   height: 100vh;
   display: grid;
-  grid-template-columns: 268px 1fr;
+  grid-template-columns: 240px 252px 1fr;
   grid-template-rows: 60px 1fr;
   overflow: hidden;
+}
+
+/* ── CHAT HISTORY (left) ── */
+.history-panel {
+  grid-row: 2;
+  background: linear-gradient(180deg, rgba(5,8,14,0.99), rgba(3,5,10,0.99));
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.history-head {
+  padding: 14px 12px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.btn-new-chat {
+  width: 100%;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(0,212,255,0.12), rgba(255,59,48,0.08));
+  border: 1px dashed var(--border2);
+  border-radius: 9px;
+  color: var(--text);
+  font-family: var(--hud);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all .2s;
+}
+.btn-new-chat:hover {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-item {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 8px;
+  transition: background .15s;
+}
+.history-item:hover { background: rgba(0,212,255,0.06); }
+.history-item.active {
+  background: rgba(0,212,255,0.1);
+  border: 1px solid var(--border2);
+}
+
+.history-btn {
+  flex: 1;
+  text-align: left;
+  padding: 10px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text2);
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  border-radius: 8px;
+  min-width: 0;
+}
+.history-item.active .history-btn { color: var(--text); }
+
+.history-title {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-date {
+  display: block;
+  font-size: 9px;
+  color: var(--text3);
+  font-family: var(--mono);
+  margin-top: 3px;
+}
+
+.history-del {
+  width: 28px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity .15s, color .15s;
+}
+.history-item:hover .history-del { opacity: 1; }
+.history-del:hover { color: var(--accent2); background: rgba(255,59,48,0.1); }
+
+.settings-panel {
+  grid-row: 2;
+  overflow-y: auto;
 }
 
 /* ── HEADER ── */
@@ -141,11 +249,10 @@ header {
   text-transform: uppercase;
 }
 
-/* ── SIDEBAR ── */
-aside {
+/* ── SETTINGS SIDEBAR ── */
+aside.settings-panel {
   background: linear-gradient(180deg, rgba(6,10,18,0.98) 0%, rgba(4,6,12,0.99) 100%);
   border-right: 1px solid var(--border);
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
@@ -714,9 +821,13 @@ main {
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.2); border-radius: 4px; }
 
-@media (max-width: 900px) {
-  body { grid-template-columns: 1fr; grid-template-rows: 56px auto 1fr; }
-  aside { display: none; }
+@media (max-width: 1100px) {
+  body { grid-template-columns: 220px 1fr; }
+  .settings-panel { display: none; }
+}
+@media (max-width: 720px) {
+  body { grid-template-columns: 1fr; }
+  .history-panel { display: none; }
   .header-sub { display: none; }
 }
 </style>
@@ -741,7 +852,14 @@ main {
   </div>
 </header>
 
-<aside>
+<nav class="history-panel" id="historyPanel">
+  <div class="history-head">
+    <button type="button" class="btn-new-chat" onclick="newConversation()">+ New chat</button>
+  </div>
+  <div class="history-list" id="historyList"></div>
+</nav>
+
+<aside class="settings-panel">
   <div class="s-sec">
     <div class="s-label">Groq API</div>
     <div class="fg">
@@ -877,11 +995,190 @@ const INDEX_CHUNK_OVERLAP = 50;
 let indexed = false;
 let busy = false;
 let allChunks = [];
-let chatSessionId = localStorage.getItem('chatSessionId');
-if (!chatSessionId) {
-  chatSessionId = (crypto.randomUUID && crypto.randomUUID()) ||
-    ('sess-' + Date.now() + '-' + Math.random().toString(16).slice(2));
-  localStorage.setItem('chatSessionId', chatSessionId);
+let activeConversationId = localStorage.getItem('activeConversationId') || null;
+let conversations = [];
+
+function mongoParams() {
+  return {
+    mongo_uri: $('mongoUri').value.trim(),
+    mongo_db: $('mongoDb').value.trim(),
+  };
+}
+
+function formatConvDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+async function loadConversations() {
+  try {
+    const p = mongoParams();
+    const r = await fetch(
+      `/api/conversations?mongo_uri=${encodeURIComponent(p.mongo_uri)}&mongo_db=${encodeURIComponent(p.mongo_db)}`
+    );
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed to load chats');
+    conversations = d.conversations || [];
+    renderConversationList();
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
+function renderConversationList() {
+  const list = $('historyList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!conversations.length) {
+    list.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--text3);text-align:center">No chats yet</div>';
+    return;
+  }
+  conversations.forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'history-item' + (c.id === activeConversationId ? ' active' : '');
+    row.innerHTML = `
+      <button type="button" class="history-btn" onclick="selectConversation('${c.id}')">
+        <span class="history-title">${escapeHtml(c.title || 'New chat')}</span>
+        <span class="history-date">${formatConvDate(c.updated_at)}</span>
+      </button>
+      <button type="button" class="history-del" title="Delete" onclick="deleteConversation(event,'${c.id}')">×</button>`;
+    list.appendChild(row);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function newConversation() {
+  try {
+    const r = await fetch('/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...mongoParams(), title: 'New chat' }),
+    });
+    const c = await r.json();
+    if (!r.ok) throw new Error(c.detail || 'Could not create chat');
+    await selectConversation(c.id, true);
+    await loadConversations();
+    toast('New chat started', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+async function selectConversation(id, skipLoad) {
+  activeConversationId = id;
+  localStorage.setItem('activeConversationId', id);
+  renderConversationList();
+  if (skipLoad) {
+    clearChatUI();
+    return;
+  }
+  try {
+    const p = mongoParams();
+    const r = await fetch(
+      `/api/conversations/${encodeURIComponent(id)}/messages?mongo_uri=${encodeURIComponent(p.mongo_uri)}&mongo_db=${encodeURIComponent(p.mongo_db)}`
+    );
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Failed to load messages');
+    renderChatFromMessages(d.messages || []);
+  } catch (e) {
+    toast(e.message, 'err');
+    clearChatUI();
+  }
+}
+
+async function deleteConversation(ev, id) {
+  ev.stopPropagation();
+  if (!confirm('Delete this chat?')) return;
+  try {
+    const p = mongoParams();
+    const r = await fetch(
+      `/api/conversations/${encodeURIComponent(id)}?mongo_uri=${encodeURIComponent(p.mongo_uri)}&mongo_db=${encodeURIComponent(p.mongo_db)}`,
+      { method: 'DELETE' }
+    );
+    if (!r.ok) {
+      const d = await r.json();
+      throw new Error(d.detail || 'Delete failed');
+    }
+    if (activeConversationId === id) {
+      activeConversationId = null;
+      localStorage.removeItem('activeConversationId');
+      clearChatUI();
+    }
+    await loadConversations();
+    if (!activeConversationId && conversations.length) {
+      await selectConversation(conversations[0].id);
+    } else if (!conversations.length) {
+      await ensureConversation();
+    }
+    toast('Chat deleted', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+function clearChatUI() {
+  const chat = $('chat');
+  chat.innerHTML = `
+    <div class="empty" id="emptyState">
+      <div class="empty-badge">Automotive AI Specialist</div>
+      <div class="empty-title">YOUR GARAGE INTEL</div>
+      <div class="empty-sub">Ask anything about your vehicle fleet — comparisons, specs, rankings, PDF reports, and dealers.</div>
+      <div class="pills">
+        <div class="pill" onclick="useQ(this)">Compare Toyota Yaris vs Renault Clio</div>
+        <div class="pill" onclick="useQ(this)">PDF report on Kia Stinger</div>
+      </div>
+    </div>`;
+}
+
+function renderChatFromMessages(messages) {
+  const chat = $('chat');
+  chat.innerHTML = '';
+  if (!messages.length) {
+    clearChatUI();
+    return;
+  }
+  messages.forEach((m, i) => {
+    if (m.role === 'user') {
+      appendMsg('u', 'Driver', m.content);
+    } else {
+      const aiId = 'hist-' + i;
+      const shell = document.createElement('div');
+      shell.className = 'msg';
+      shell.id = aiId;
+      shell.innerHTML = `
+        <div class="av a">AI</div>
+        <div class="mb">
+          <div class="mm"><span class="mn">NIDIX SPECIALIST</span></div>
+          <div class="mc" id="mc-${aiId}">${formatAnswer(m.content)}</div>
+          <div class="msg-actions">${typeof Voice !== 'undefined' ? Voice.speakButtonHtml(aiId) : ''}</div>
+        </div>`;
+      chat.appendChild(shell);
+      const mc = $(`mc-${aiId}`);
+      if (mc) mc.dataset.plainText = m.content;
+    }
+  });
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function ensureConversation() {
+  await loadConversations();
+  if (activeConversationId && conversations.some(c => c.id === activeConversationId)) {
+    await selectConversation(activeConversationId);
+    return;
+  }
+  if (conversations.length) {
+    await selectConversation(conversations[0].id);
+    return;
+  }
+  await newConversation();
 }
 
 function formatAnswer(text) {
@@ -998,6 +1295,7 @@ async function indexDoc() {
 
 async function ask() {
   if (busy || !indexed) return;
+  if (!activeConversationId) await ensureConversation();
   const q = $('qInput').value.trim();
   if (!q) return;
 
@@ -1063,7 +1361,8 @@ async function ask() {
         mongo_uri: $('mongoUri').value.trim(),
         mongo_db: $('mongoDb').value.trim(),
         vector_collection: $('mongoVecCol').value.trim() || 'car_vectors',
-        session_id: chatSessionId
+        conversation_id: activeConversationId,
+        session_id: activeConversationId
       })
     });
 
@@ -1087,8 +1386,8 @@ async function ask() {
           const ev = JSON.parse(line.slice(6));
 
           if (ev.type === 'meta' && ev.session_id) {
-            chatSessionId = ev.session_id;
-            localStorage.setItem('chatSessionId', chatSessionId);
+            activeConversationId = ev.session_id;
+            localStorage.setItem('activeConversationId', activeConversationId);
           }
 
           if (ev.type === 'sources') {
@@ -1112,6 +1411,7 @@ async function ask() {
             mcEl.dataset.plainText = answer;
             setPipe(3);
             if (typeof Voice !== 'undefined' && answer.trim()) Voice.maybeAutoSpeak(answer);
+            loadConversations();
           }
 
           if (ev.type === 'error') {
@@ -1150,6 +1450,7 @@ function appendMsg(role, name, content) {
 
 loadGroqKey();
 testGroq(false);
+ensureConversation();
 
 if (typeof Voice !== 'undefined') {
   Voice.init({

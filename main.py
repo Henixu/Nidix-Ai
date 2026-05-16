@@ -36,6 +36,7 @@ from report_service import (
     is_report_request,
     send_report_email,
 )
+import chat_history
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -311,6 +312,16 @@ class QueryRequest(BaseModel):
     mongo_db: str = "Nidix"
     vector_collection: str = DEFAULT_VECTOR_COLLECTION
     session_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+
+
+class MongoScope(BaseModel):
+    mongo_uri: str = "mongodb://localhost:27017"
+    mongo_db: str = "Nidix"
+
+
+class CreateConversationRequest(MongoScope):
+    title: str = "New chat"
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -528,11 +539,31 @@ async def index_document(req: IndexRequest):
         raise HTTPException(500, str(e))
 
 
-def build_car_rag_prompt(question: str, context: str) -> str:
+def build_car_rag_prompt(
+    question: str,
+    context: str,
+    history: Optional[list[dict]] = None,
+) -> str:
+    history_block = ""
+    if history:
+        lines = []
+        for msg in history[-12:]:
+            role = "User" if msg.get("role") == "user" else "Assistant"
+            text = str(msg.get("content", "")).strip()
+            if text:
+                lines.append(f"{role}: {text[:800]}")
+        if lines:
+            history_block = (
+                "CONVERSATION HISTORY (same chat — use for follow-ups like 'it', 'that car', comparisons):\n"
+                + "\n".join(lines)
+                + "\n\n"
+            )
+
     return f"""You are NIDIX AI, an automotive specialist. Answer using the CONTEXT below (indexed vehicle database).
 
 Rules:
 - The CONTEXT contains real vehicle profiles. Use them to answer even if partial.
+- Use CONVERSATION HISTORY when the user refers to earlier messages.
 - Quote exact numbers when present (price EUR, power ch, consumption, CO2, range, etc.).
 - For comparisons, name each car and list key differences from the context.
 - You may summarize and infer obvious comparisons from the specs shown, but do not invent numbers not in CONTEXT.
@@ -542,13 +573,52 @@ Rules:
 Answer style:
 - Short engaging summary, then bullet "Key specs" with exact values from context.
 
-CONTEXT:
+{history_block}CONTEXT:
 {context}
 
 QUESTION:
 {question}
 
 ANSWER:"""
+
+
+def _flow_session_id(req: QueryRequest) -> str:
+    return (req.conversation_id or req.session_id or "").strip() or str(uuid.uuid4())
+
+
+def _load_chat_history(req: QueryRequest) -> list[dict]:
+    cid = (req.conversation_id or "").strip()
+    if not cid:
+        return []
+    try:
+        return chat_history.get_history_for_prompt(
+            req.mongo_uri, req.mongo_db, cid
+        )
+    except Exception as exc:
+        logger.warning("Could not load chat history: %s", exc)
+        return []
+
+
+def _persist_chat_turn(
+    req: QueryRequest,
+    user_text: str,
+    assistant_text: str,
+    sources: Optional[list] = None,
+) -> None:
+    cid = (req.conversation_id or "").strip()
+    if not cid or not assistant_text.strip():
+        return
+    try:
+        chat_history.save_exchange(
+            req.mongo_uri,
+            req.mongo_db,
+            cid,
+            user_text,
+            assistant_text,
+            sources=sources,
+        )
+    except Exception as exc:
+        logger.warning("Could not save chat turn: %s", exc)
 
 
 def _resolve_groq_key(req_key: Optional[str]) -> str:
@@ -659,7 +729,7 @@ def try_handle_report_flow(req: QueryRequest) -> Optional[dict]:
     if not vector_store.car_records:
         return None
 
-    session_id = (req.session_id or "").strip() or str(uuid.uuid4())
+    session_id = _flow_session_id(req)
     question = req.question.strip()
     email_in_message = extract_email(question)
 
@@ -790,9 +860,10 @@ def _stream_deterministic_answer(payload: dict) -> StreamingResponse:
         meta = {
             "type": "meta",
             "session_id": payload.get("session_id"),
+            "conversation_id": payload.get("conversation_id"),
             "report_state": payload.get("report_state"),
         }
-        if meta.get("session_id") or meta.get("report_state"):
+        if meta.get("session_id") or meta.get("conversation_id") or meta.get("report_state"):
             yield f"data: {json.dumps(meta)}\n\n"
         for part in payload["answer"].split(" "):
             yield f"data: {json.dumps({'type': 'token', 'text': part + ' '})}\n\n"
@@ -804,20 +875,26 @@ def _stream_deterministic_answer(payload: dict) -> StreamingResponse:
 
 @app.post("/api/query")
 async def query_document(req: QueryRequest):
+    history = _load_chat_history(req)
     report_result = try_handle_report_flow(req)
     if report_result is not None:
+        _persist_chat_turn(req, req.question, report_result["answer"])
+        report_result["conversation_id"] = req.conversation_id
         return report_result
 
     deterministic = try_answer_dealers_question(req.question)
     if deterministic is not None:
+        _persist_chat_turn(
+            req, req.question, deterministic["answer"], sources=deterministic.get("sources")
+        )
         return {
             "answer": deterministic["answer"],
             "sources": deterministic["sources"],
             "model": req.model,
-            "pipeline": ["detect dealer query", "filter indexed cars", "return grounded answer"]
+            "pipeline": ["detect dealer query", "filter indexed cars", "return grounded answer"],
+            "conversation_id": req.conversation_id,
         }
 
-    # Retrieve
     results = vector_store.retrieve(
         req.question,
         req.top_k,
@@ -828,11 +905,9 @@ async def query_document(req: QueryRequest):
     if not results:
         raise HTTPException(400, "No vectors indexed yet. Run indexing first.")
     context = _build_context(results)
-
-    prompt = build_car_rag_prompt(req.question, context)
+    prompt = build_car_rag_prompt(req.question, context, history=history)
     messages = [{"role": "user", "content": prompt}]
 
-    # Call Groq
     try:
         api_key = _resolve_groq_key(req.groq_api_key)
         answer = await _groq_chat_completion(
@@ -847,23 +922,31 @@ async def query_document(req: QueryRequest):
     except Exception as e:
         raise HTTPException(500, f"Groq error: {str(e)}")
 
+    _persist_chat_turn(req, req.question, answer, sources=results)
+
     return {
         "answer": answer,
         "sources": results,
         "model": req.model,
-        "pipeline": ["embed query", f"retrieve top-{req.top_k}", "build prompt", "generate"]
+        "pipeline": ["embed query", f"retrieve top-{req.top_k}", "build prompt", "generate"],
+        "conversation_id": req.conversation_id,
     }
 
 
 @app.post("/api/query/stream")
 async def query_stream(req: QueryRequest):
     """Streaming version using SSE"""
+    history = _load_chat_history(req)
     report_result = try_handle_report_flow(req)
     if report_result is not None:
+        _persist_chat_turn(req, req.question, report_result["answer"])
         return _stream_deterministic_answer(report_result)
 
     deterministic = try_answer_dealers_question(req.question)
     if deterministic is not None:
+        _persist_chat_turn(
+            req, req.question, deterministic["answer"], sources=deterministic.get("sources")
+        )
         return _stream_deterministic_answer(deterministic)
 
     results = vector_store.retrieve(
@@ -876,11 +959,11 @@ async def query_stream(req: QueryRequest):
     if not results:
         raise HTTPException(400, "No vectors indexed yet. Run indexing first.")
     context = _build_context(results)
-    prompt = build_car_rag_prompt(req.question, context)
+    prompt = build_car_rag_prompt(req.question, context, history=history)
 
     async def stream_generator():
-        # First send sources
         yield f"data: {json.dumps({'type': 'sources', 'sources': results})}\n\n"
+        answer_parts: list[str] = []
 
         try:
             api_key = _resolve_groq_key(req.groq_api_key)
@@ -905,16 +988,19 @@ async def query_stream(req: QueryRequest):
                             continue
                         data = line[6:].strip()
                         if data == "[DONE]":
-                            yield f"data: {json.dumps({'type': 'done'})}\n\n"
                             break
                         try:
                             evt = json.loads(data)
                             delta = evt.get("choices", [{}])[0].get("delta", {})
                             token = delta.get("content", "")
                             if token:
+                                answer_parts.append(token)
                                 yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
                         except json.JSONDecodeError:
                             continue
+            full_answer = "".join(answer_parts)
+            _persist_chat_turn(req, req.question, full_answer, sources=results)
+            yield f"data: {json.dumps({'type': 'done', 'conversation_id': req.conversation_id})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -939,6 +1025,63 @@ async def status(groq_api_key: Optional[str] = None):
             return {"connected": True, "models": models}
     except Exception:
         return {"connected": False, "models": []}
+
+
+@app.get("/api/conversations")
+async def list_conversations(
+    mongo_uri: str = "mongodb://localhost:27017",
+    mongo_db: str = "Nidix",
+    limit: int = 60,
+):
+    try:
+        conversations = chat_history.list_conversations(mongo_uri, mongo_db, limit=limit)
+        return {"conversations": conversations}
+    except Exception as exc:
+        raise HTTPException(400, f"MongoDB error: {str(exc)}")
+
+
+@app.post("/api/conversations")
+async def create_conversation(req: CreateConversationRequest):
+    try:
+        conv = chat_history.create_conversation(
+            req.mongo_uri, req.mongo_db, title=req.title
+        )
+        return conv
+    except Exception as exc:
+        raise HTTPException(400, f"MongoDB error: {str(exc)}")
+
+
+@app.get("/api/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    mongo_uri: str = "mongodb://localhost:27017",
+    mongo_db: str = "Nidix",
+):
+    try:
+        messages = chat_history.get_messages(mongo_uri, mongo_db, conversation_id)
+        return {"conversation_id": conversation_id, "messages": messages}
+    except Exception as exc:
+        raise HTTPException(400, f"MongoDB error: {str(exc)}")
+
+
+@app.delete("/api/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    mongo_uri: str = "mongodb://localhost:27017",
+    mongo_db: str = "Nidix",
+):
+    try:
+        deleted = chat_history.delete_conversation(
+            mongo_uri, mongo_db, conversation_id
+        )
+        if not deleted:
+            raise HTTPException(404, "Conversation not found")
+        _report_sessions.pop(conversation_id, None)
+        return {"success": True, "id": conversation_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(400, f"MongoDB error: {str(exc)}")
 
 
 @app.get("/api/chunks")
