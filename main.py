@@ -32,6 +32,7 @@ from report_service import (
     car_label,
     extract_email,
     find_car_in_records,
+    is_cancel_report_request,
     is_report_request,
     send_report_email,
 )
@@ -44,8 +45,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # Prompt size tuning (helps response time for large models).
-MAX_CHUNK_CHARS = 1200
-MAX_CONTEXT_CHARS = 6000
+MAX_CHUNK_CHARS = 1400
+MAX_CONTEXT_CHARS = 9000
 DEFAULT_NUM_PREDICT = 256
 # Groq API config
 DEFAULT_GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -528,19 +529,18 @@ async def index_document(req: IndexRequest):
 
 
 def build_car_rag_prompt(question: str, context: str) -> str:
-    return f"""You are CarRAG, a creative automotive advisor for vehicle comparison and analysis.
-You must answer using ONLY the CONTEXT below.
+    return f"""You are NIDIX AI, an automotive specialist. Answer using the CONTEXT below (indexed vehicle database).
 
 Rules:
-- If the answer is not in context, say: "I don't have enough data in the indexed cars collection."
-- Prefer exact values (price, power, consommation, emissions, autonomie) from context.
-- For comparisons, present both cars clearly and mention key differences.
-- Do not invent missing specs.
-- Avoid dumping raw fields; synthesize into an engaging, helpful response.
+- The CONTEXT contains real vehicle profiles. Use them to answer even if partial.
+- Quote exact numbers when present (price EUR, power ch, consumption, CO2, range, etc.).
+- For comparisons, name each car and list key differences from the context.
+- You may summarize and infer obvious comparisons from the specs shown, but do not invent numbers not in CONTEXT.
+- Say "I don't have enough data in the indexed cars collection" ONLY if CONTEXT has no vehicle relevant to the question.
+- If the user names a brand/model, focus on the matching profile(s) in CONTEXT first.
 
 Answer style:
-- Start with a short, engaging summary (2-4 sentences) with the key tradeoffs.
-- Then add a compact "Key evidence" list with exact specs from the context.
+- Short engaging summary, then bullet "Key specs" with exact values from context.
 
 CONTEXT:
 {context}
@@ -665,53 +665,51 @@ def try_handle_report_flow(req: QueryRequest) -> Optional[dict]:
 
     pending = _report_sessions.get(session_id)
     if pending and pending.get("awaiting_email"):
-        if is_report_request(question, _normalize_text) and not email_in_message:
+        if email_in_message:
+            car_doc = pending["car_doc"]
+            label = pending.get("car_label", car_label(car_doc))
+            try:
+                pdf_bytes = build_pdf_report(car_doc)
+                send_report_email(email_in_message, car_doc, pdf_bytes)
+                _report_sessions.pop(session_id, None)
+                return {
+                    "answer": (
+                        f"Done! I've sent the PDF vehicle report for **{label}** to **{email_in_message}**. "
+                        "Check your inbox (and spam folder if needed)."
+                    ),
+                    "sources": [],
+                    "model": req.model,
+                    "pipeline": ["generate PDF", "send email"],
+                    "session_id": session_id,
+                    "report_state": "sent",
+                }
+            except Exception as exc:
+                logger.exception("Failed to send report email")
+                return {
+                    "answer": (
+                        f"I generated the report for **{label}** but could not send the email: {exc}. "
+                        "Ask your administrator to configure SMTP_USER and SMTP_PASSWORD."
+                    ),
+                    "sources": [],
+                    "model": req.model,
+                    "pipeline": ["generate PDF", "email failed"],
+                    "session_id": session_id,
+                    "report_state": "error",
+                }
+
+        if is_cancel_report_request(question, _normalize_text):
             _report_sessions.pop(session_id, None)
-            pending = None
-        elif not email_in_message:
-            label = pending.get("car_label", "this vehicle")
             return {
-                "answer": (
-                    f"I still need your email address to send the PDF report for **{label}**. "
-                    "Please reply with a valid email (for example: name@example.com)."
-                ),
+                "answer": "Report cancelled. You can ask me anything else about your vehicles.",
                 "sources": [],
                 "model": req.model,
-                "pipeline": ["awaiting email", "validate input"],
+                "pipeline": ["cancel report"],
                 "session_id": session_id,
-                "report_state": "awaiting_email",
+                "report_state": "cancelled",
             }
 
-        car_doc = pending["car_doc"]
-        label = pending.get("car_label", car_label(car_doc))
-        try:
-            pdf_bytes = build_pdf_report(car_doc)
-            send_report_email(email_in_message, car_doc, pdf_bytes)
-            _report_sessions.pop(session_id, None)
-            return {
-                "answer": (
-                    f"Done! I've sent the PDF vehicle report for **{label}** to **{email_in_message}**. "
-                    "Check your inbox (and spam folder if needed)."
-                ),
-                "sources": [],
-                "model": req.model,
-                "pipeline": ["generate PDF", "send email"],
-                "session_id": session_id,
-                "report_state": "sent",
-            }
-        except Exception as exc:
-            logger.exception("Failed to send report email")
-            return {
-                "answer": (
-                    f"I generated the report for **{label}** but could not send the email: {exc}. "
-                    "Ask your administrator to configure SMTP_USER and SMTP_PASSWORD."
-                ),
-                "sources": [],
-                "model": req.model,
-                "pipeline": ["generate PDF", "email failed"],
-                "session_id": session_id,
-                "report_state": "error",
-            }
+        # User changed topic or started a new report — do not trap them in email step
+        _report_sessions.pop(session_id, None)
 
     if not is_report_request(question, _normalize_text):
         return None
@@ -726,7 +724,7 @@ def try_handle_report_flow(req: QueryRequest) -> Optional[dict]:
         return {
             "answer": (
                 "I can prepare a PDF report and email it to you. "
-                "Please specify which car you want (for example: *Toyota Yaris* or *Renault Clio*), "
+                "Please specify the exact **brand and model** (for example: *Kia Stinger* or *Renault Clio*), "
                 "then I'll ask for your email."
             ),
             "sources": [],

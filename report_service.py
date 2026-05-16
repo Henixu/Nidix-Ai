@@ -76,6 +76,83 @@ def parse_car_from_chunk(chunk: str) -> tuple[str, str]:
     return marque, modele
 
 
+CANCEL_REPORT_WORDS = [
+    "cancel", "annuler", "stop", "never mind", "forget", "oublie",
+    "laisse tomber", "laisse tombé", "non merci",
+]
+
+
+def is_cancel_report_request(question: str, normalize_fn: Callable[[str], str]) -> bool:
+    q = normalize_fn(question)
+    return any(w in q for w in CANCEL_REPORT_WORDS)
+
+
+def _score_car_match(q: str, doc: dict, normalize_fn: Callable[[str], str]) -> int:
+    """Higher score = better match. Model name beats brand-only."""
+    marque = normalize_fn(str(doc.get("marque", "")))
+    modele = normalize_fn(str(doc.get("modele", "")))
+    if not marque and not modele:
+        return 0
+
+    score = 0
+    phrase = f"{marque} {modele}".strip()
+    if phrase and phrase in q:
+        return 600 + len(phrase)
+
+    if modele and len(modele) >= 3 and modele in q:
+        score = 300 + len(modele)
+        if marque and marque in q:
+            score += 120
+        return score
+
+    if modele and len(modele) >= 2 and re.search(rf"\b{re.escape(modele)}\b", q):
+        score = 220 + len(modele)
+        if marque and marque in q:
+            score += 80
+        return score
+
+    if marque and len(marque) >= 2 and re.search(rf"\b{re.escape(marque)}\b", q):
+        return 35 + len(marque)
+
+    return 0
+
+
+def _doc_matches_identity(doc: dict, marque: str, modele: str, normalize_fn: Callable[[str], str]) -> bool:
+    return (
+        normalize_fn(str(doc.get("marque", ""))) == normalize_fn(marque)
+        and normalize_fn(str(doc.get("modele", ""))) == normalize_fn(modele)
+    )
+
+
+def _pick_from_retrieval(
+    question: str,
+    car_records: list[dict],
+    normalize_fn: Callable[[str], str],
+    retrieve_fn: Callable[[str, int], list[dict]],
+    candidates: Optional[list[dict]] = None,
+) -> Optional[dict]:
+    pool = candidates if candidates is not None else car_records
+    if not pool:
+        return None
+
+    results = retrieve_fn(question, 8)
+    best_doc = None
+    best_rank = 999
+
+    for rank, hit in enumerate(results):
+        marque, modele = parse_car_from_chunk(hit.get("chunk", ""))
+        if not marque and not modele:
+            continue
+        for doc in pool:
+            if _doc_matches_identity(doc, marque, modele, normalize_fn):
+                if rank < best_rank:
+                    best_rank = rank
+                    best_doc = doc
+                break
+
+    return best_doc
+
+
 def find_car_in_records(
     question: str,
     car_records: list[dict],
@@ -86,32 +163,43 @@ def find_car_in_records(
         return None
 
     q = normalize_fn(question)
-    matches = []
-    for doc in car_records:
-        marque = normalize_fn(str(doc.get("marque", "")))
-        modele = normalize_fn(str(doc.get("modele", "")))
-        if marque and marque in q:
-            matches.append(doc)
-        elif modele and modele in q and (not marque or marque in q):
-            matches.append(doc)
+    scored = [
+        (_score_car_match(q, doc, normalize_fn), doc)
+        for doc in car_records
+    ]
+    scored = [(s, d) for s, d in scored if s > 0]
+    scored.sort(key=lambda x: x[0], reverse=True)
 
-    if len(matches) == 1:
-        return matches[0]
-    if matches:
-        return matches[0]
+    if scored:
+        top_score, top_doc = scored[0]
+        second_score = scored[1][0] if len(scored) > 1 else 0
+
+        # Clear winner (e.g. "Kia Stinger" beats other Kias)
+        if top_score >= 200 and (top_score - second_score) >= 80:
+            return top_doc
+
+        # Several close matches — use vector search to disambiguate
+        if retrieve_fn and top_score >= 35:
+            close = [d for s, d in scored if s >= top_score - 40][:25]
+            picked = _pick_from_retrieval(
+                question, car_records, normalize_fn, retrieve_fn, close
+            )
+            if picked:
+                return picked
+
+        # Brand-only mention ("Kia") — never return first DB row
+        if top_score < 200 and retrieve_fn:
+            picked = _pick_from_retrieval(
+                question, car_records, normalize_fn, retrieve_fn
+            )
+            if picked:
+                return picked
+
+        if top_score >= 200:
+            return top_doc
 
     if retrieve_fn:
-        results = retrieve_fn(question, top_k=3)
-        for hit in results:
-            marque, modele = parse_car_from_chunk(hit.get("chunk", ""))
-            if not marque and not modele:
-                continue
-            for doc in car_records:
-                if (
-                    normalize_fn(str(doc.get("marque", ""))) == normalize_fn(marque)
-                    and normalize_fn(str(doc.get("modele", ""))) == normalize_fn(modele)
-                ):
-                    return doc
+        return _pick_from_retrieval(question, car_records, normalize_fn, retrieve_fn)
 
     return None
 

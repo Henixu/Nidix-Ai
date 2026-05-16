@@ -868,8 +868,9 @@ main {
 <script src="/static/voice.js"></script>
 <script>
 const GROQ_MODEL = 'llama-3.1-8b-instant';
-const RAG_TOP_K = 5;
-const RAG_TEMP = 0.7;
+const RAG_TOP_K = 6;
+const RAG_TEMP = 0.5;
+const RAG_MAX_TOKENS = 384;
 const INDEX_CHUNK_SIZE = 500;
 const INDEX_CHUNK_OVERLAP = 50;
 
@@ -1057,7 +1058,7 @@ async function ask() {
         top_k: RAG_TOP_K,
         model: GROQ_MODEL,
         temperature: RAG_TEMP,
-        max_tokens: 256,
+        max_tokens: RAG_MAX_TOKENS,
         groq_api_key: $('groqKey').value.trim(),
         mongo_uri: $('mongoUri').value.trim(),
         mongo_db: $('mongoDb').value.trim(),
